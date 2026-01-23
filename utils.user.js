@@ -43,6 +43,9 @@
   let numericPrefixTimer = null;
   let gPending = false;
   let gPendingTimer = null;
+  let navJDown = false;
+  let navKDown = false;
+  let lastNavKey = null;
 
   const shouldIgnoreKeyEvent = (event) => {
     if (!event) return false;
@@ -678,6 +681,12 @@
 
     if (lowerKey === 'j' || lowerKey === 'k') {
       event.preventDefault();
+      if (lowerKey === 'j') {
+        navJDown = true;
+      } else {
+        navKDown = true;
+      }
+      lastNavKey = lowerKey;
       const multiplier = getNumericMultiplier();
       startScroll(lowerKey === 'j' ? 1 : -1, multiplier);
       return;
@@ -689,7 +698,19 @@
   const onKeyUpNav = (event) => {
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
     if (lowerKey === 'j' || lowerKey === 'k') {
-      stopScroll();
+      if (lowerKey === 'j') {
+        navJDown = false;
+      } else {
+        navKDown = false;
+      }
+      if (!navJDown && !navKDown) {
+        stopScroll();
+        return;
+      }
+      const nextKey = navJDown && navKDown ? lastNavKey : (navJDown ? 'j' : 'k');
+      if (nextKey) {
+        startScroll(nextKey === 'j' ? 1 : -1, 1);
+      }
     }
   };
 

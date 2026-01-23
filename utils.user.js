@@ -16,6 +16,7 @@
   const STYLE_ID = 'userscript-utils-style';
   const TOGGLE_HINT = 'Alt+Q or Alt+Shift+[';
   const RIGHT_CLICK_LIST_KEY = 'userscript-utils:right-click-list';
+  const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
   const RIGHT_CLICK_MODE_DISABLED = 'disabled';
   const RIGHT_CLICK_MODE_COPY = 'copy';
   const RIGHT_CLICK_MODE_LIST = 'list';
@@ -32,6 +33,8 @@
   let rightClickListenerAttached = false;
   let rightClickList = [];
   let menuOpenedOnce = false;
+  let vimiumLiteEnabled = true;
+  let vimiumLiteButton = null;
   let scrollDirection = 0;
   let scrollMultiplier = 1;
   let scrollRafId = null;
@@ -206,6 +209,25 @@
     }
   };
 
+  const loadVimiumLiteEnabled = () => {
+    try {
+      const raw = window.localStorage.getItem(VIMIUM_LITE_KEY);
+      if (raw === null) return true;
+      return raw === 'true';
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load vimium-lite setting:', err);
+      return true;
+    }
+  };
+
+  const saveVimiumLiteEnabled = () => {
+    try {
+      window.localStorage.setItem(VIMIUM_LITE_KEY, vimiumLiteEnabled ? 'true' : 'false');
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save vimium-lite setting:', err);
+    }
+  };
+
   const saveRightClickList = () => {
     try {
       window.localStorage.setItem(RIGHT_CLICK_LIST_KEY, JSON.stringify(rightClickList));
@@ -215,6 +237,7 @@
   };
 
   rightClickList = loadRightClickList();
+  vimiumLiteEnabled = loadVimiumLiteEnabled();
 
   const updateRightClickListUI = () => {
     if (!rightClickListEl || !rightClickListCountEl) return;
@@ -226,6 +249,13 @@
     if (rightClickClearBtn) {
       rightClickClearBtn.disabled = rightClickList.length === 0;
     }
+  };
+
+  const updateVimiumLiteButton = () => {
+    if (!vimiumLiteButton) return;
+    vimiumLiteButton.textContent = vimiumLiteEnabled ? 'Vimium Lite: On' : 'Vimium Lite: Off';
+    vimiumLiteButton.classList.toggle('active', vimiumLiteEnabled);
+    vimiumLiteButton.classList.toggle('secondary', !vimiumLiteEnabled);
   };
 
   const buildMenu = () => {
@@ -316,11 +346,31 @@
     rightClickDesc.textContent = 'Prevents the context menu and targets images/links based on the selected mode. Saved list persists via local storage.';
     rightClickSection.append(rightClickTitle, rightClickControls, rightClickDesc, rightClickListHeader, rightClickListEl);
 
+    const navSection = document.createElement('div');
+    navSection.className = 'utils-section';
+    const navTitle = document.createElement('h3');
+    navTitle.textContent = 'Navigation';
+    vimiumLiteButton = document.createElement('button');
+    vimiumLiteButton.type = 'button';
+    vimiumLiteButton.className = 'utils-btn';
+    vimiumLiteButton.addEventListener('click', () => {
+      vimiumLiteEnabled = !vimiumLiteEnabled;
+      if (!vimiumLiteEnabled) {
+        stopScroll();
+      }
+      saveVimiumLiteEnabled();
+      updateVimiumLiteButton();
+    });
+    updateVimiumLiteButton();
+    const navDesc = document.createElement('p');
+    navDesc.textContent = 'J/K scroll, G/big G jump, and numeric prefixes for speed.';
+    navSection.append(navTitle, vimiumLiteButton, navDesc);
+
     const footer = document.createElement('div');
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, auditSection, rightClickSection, footer);
+    panel.append(header, auditSection, rightClickSection, navSection, footer);
     menuEl = panel;
     updateRightClickModeButtons();
     updateRightClickListUI();
@@ -571,6 +621,7 @@
     if (shouldIgnoreKeyEvent(event)) return;
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (menuEl && menuEl.isConnected) return;
+    if (!vimiumLiteEnabled) return;
 
     const key = event.key;
     if (key >= '0' && key <= '9') {
@@ -581,8 +632,21 @@
     }
 
     const lowerKey = key && key.toLowerCase ? key.toLowerCase() : key;
+    if (event.shiftKey && lowerKey === 'g') {
+      event.preventDefault();
+      jumpToEdge(1);
+      clearNumericPrefix();
+      clearGPending();
+      return;
+    }
     if (gPending) {
       clearGPending();
+      if (lowerKey === 'g') {
+        event.preventDefault();
+        jumpToEdge(-1);
+        clearNumericPrefix();
+        return;
+      }
       if (lowerKey === 'k') {
         event.preventDefault();
         jumpToEdge(-1);

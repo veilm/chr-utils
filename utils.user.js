@@ -1,6 +1,7 @@
 // ==UserScript==
-// @name         Userscript Utils
-// @namespace    https://example.local/
+// @name         Chromium Utils
+// @author       https://x.com/sucralose__ | codex | claude
+// @namespace    https://github.com/veilm/chr-utils
 // @version      0.1.0
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*

@@ -19,6 +19,8 @@
   const RIGHT_CLICK_MODE_DISABLED = 'disabled';
   const RIGHT_CLICK_MODE_COPY = 'copy';
   const RIGHT_CLICK_MODE_LIST = 'list';
+  const SCROLL_SPEED = 900;
+  const SCROLL_JUMP_PADDING = 12;
 
   let menuEl = null;
   let rightClickModeButtons = null;
@@ -30,6 +32,14 @@
   let rightClickListenerAttached = false;
   let rightClickList = [];
   let menuOpenedOnce = false;
+  let scrollDirection = 0;
+  let scrollMultiplier = 1;
+  let scrollRafId = null;
+  let scrollLastTs = 0;
+  let numericPrefix = '';
+  let numericPrefixTimer = null;
+  let gPending = false;
+  let gPendingTimer = null;
 
   const shouldIgnoreKeyEvent = (event) => {
     if (!event) return false;
@@ -445,6 +455,87 @@
     updateRightClickModeButtons();
   };
 
+  const clearNumericPrefix = () => {
+    if (numericPrefixTimer) {
+      clearTimeout(numericPrefixTimer);
+      numericPrefixTimer = null;
+    }
+    numericPrefix = '';
+  };
+
+  const queueNumericPrefixClear = () => {
+    if (numericPrefixTimer) {
+      clearTimeout(numericPrefixTimer);
+    }
+    numericPrefixTimer = setTimeout(() => {
+      numericPrefix = '';
+      numericPrefixTimer = null;
+    }, 1000);
+  };
+
+  const getNumericMultiplier = () => {
+    if (!numericPrefix) return 1;
+    const parsed = Number.parseInt(numericPrefix, 10);
+    clearNumericPrefix();
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  };
+
+  const clearGPending = () => {
+    if (gPendingTimer) {
+      clearTimeout(gPendingTimer);
+      gPendingTimer = null;
+    }
+    gPending = false;
+  };
+
+  const setGPending = () => {
+    clearGPending();
+    gPending = true;
+    gPendingTimer = setTimeout(() => {
+      gPending = false;
+      gPendingTimer = null;
+    }, 700);
+  };
+
+  const stopScroll = () => {
+    scrollDirection = 0;
+    scrollMultiplier = 1;
+    if (scrollRafId !== null) {
+      cancelAnimationFrame(scrollRafId);
+      scrollRafId = null;
+    }
+  };
+
+  const stepScroll = (ts) => {
+    if (scrollDirection === 0) {
+      scrollRafId = null;
+      return;
+    }
+    const dt = Math.min(64, ts - scrollLastTs);
+    scrollLastTs = ts;
+    const delta = scrollDirection * SCROLL_SPEED * (dt / 1000) * scrollMultiplier;
+    window.scrollBy(0, delta);
+    scrollRafId = requestAnimationFrame(stepScroll);
+  };
+
+  const startScroll = (direction, multiplier) => {
+    scrollDirection = direction;
+    scrollMultiplier = multiplier;
+    if (scrollRafId === null) {
+      scrollLastTs = performance.now();
+      window.scrollBy(0, direction * 18 * multiplier);
+      scrollRafId = requestAnimationFrame(stepScroll);
+    }
+  };
+
+  const jumpToEdge = (direction) => {
+    const doc = document.documentElement;
+    const maxY = Math.max(0, doc.scrollHeight - window.innerHeight);
+    const target = direction < 0 ? 0 : maxY;
+    const offset = direction < 0 ? SCROLL_JUMP_PADDING : -SCROLL_JUMP_PADDING;
+    window.scrollTo({ top: Math.max(0, Math.min(maxY, target + offset)) });
+  };
+
   const onKeyDown = (event) => {
     if (event.repeat) return;
     if (menuEl && menuEl.isConnected) {
@@ -475,8 +566,66 @@
     setMenuOpen(!menuEl || !menuEl.isConnected);
   };
 
+  const onKeyDownNav = (event) => {
+    if (event.repeat) return;
+    if (shouldIgnoreKeyEvent(event)) return;
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (menuEl && menuEl.isConnected) return;
+
+    const key = event.key;
+    if (key >= '0' && key <= '9') {
+      numericPrefix = `${numericPrefix}${key}`;
+      queueNumericPrefixClear();
+      event.preventDefault();
+      return;
+    }
+
+    const lowerKey = key && key.toLowerCase ? key.toLowerCase() : key;
+    if (gPending) {
+      clearGPending();
+      if (lowerKey === 'k') {
+        event.preventDefault();
+        jumpToEdge(-1);
+        clearNumericPrefix();
+        return;
+      }
+      if (lowerKey === 'j') {
+        event.preventDefault();
+        jumpToEdge(1);
+        clearNumericPrefix();
+        return;
+      }
+    }
+
+    if (lowerKey === 'g') {
+      event.preventDefault();
+      setGPending();
+      clearNumericPrefix();
+      return;
+    }
+
+    if (lowerKey === 'j' || lowerKey === 'k') {
+      event.preventDefault();
+      const multiplier = getNumericMultiplier();
+      startScroll(lowerKey === 'j' ? 1 : -1, multiplier);
+      return;
+    }
+
+    clearNumericPrefix();
+  };
+
+  const onKeyUpNav = (event) => {
+    const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
+    if (lowerKey === 'j' || lowerKey === 'k') {
+      stopScroll();
+    }
+  };
+
   setRightClickMode(RIGHT_CLICK_MODE_COPY);
   document.addEventListener('keydown', onKeyDown, true);
+  document.addEventListener('keydown', onKeyDownNav, true);
+  document.addEventListener('keyup', onKeyUpNav, true);
+  window.addEventListener('blur', stopScroll);
 
   const runImageHostAudit = () => {
     const previousAudit = window.__imageHostAudit;

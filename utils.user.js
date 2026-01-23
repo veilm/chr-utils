@@ -527,7 +527,9 @@
     if (!numericPrefix) return 1;
     const parsed = Number.parseInt(numericPrefix, 10);
     clearNumericPrefix();
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+    if (!Number.isFinite(parsed)) return 1;
+    if (parsed === 0) return 10;
+    return parsed > 0 ? parsed : 1;
   };
 
   const clearGPending = () => {
@@ -617,15 +619,21 @@
   };
 
   const onKeyDownNav = (event) => {
-    if (event.repeat) return;
     if (shouldIgnoreKeyEvent(event)) return;
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (menuEl && menuEl.isConnected) return;
     if (!vimiumLiteEnabled) return;
 
     const key = event.key;
+    if (event.repeat) {
+      const lowerRepeatKey = key && key.toLowerCase ? key.toLowerCase() : key;
+      if (lowerRepeatKey === 'j' || lowerRepeatKey === 'k') {
+        event.preventDefault();
+      }
+      return;
+    }
     if (key >= '0' && key <= '9') {
-      numericPrefix = `${numericPrefix}${key}`;
+      numericPrefix = key;
       queueNumericPrefixClear();
       event.preventDefault();
       return;

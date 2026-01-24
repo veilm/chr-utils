@@ -46,6 +46,9 @@
   let navJDown = false;
   let navKDown = false;
   let lastNavKey = null;
+  let scrollTargetEl = null;
+  let scrollTargetIsWindow = true;
+  let lastPointerTarget = null;
 
   const shouldIgnoreKeyEvent = (event) => {
     if (!event) return false;
@@ -61,6 +64,47 @@
       return true;
     }
     return false;
+  };
+
+  const isScrollableNode = (node) => {
+    if (!node || node.nodeType !== 1) return false;
+    const style = window.getComputedStyle(node);
+    const overflowY = style.overflowY;
+    if (overflowY !== 'auto' && overflowY !== 'scroll') return false;
+    return node.scrollHeight > node.clientHeight + 2;
+  };
+
+  const getNearestScrollableAncestor = (node) => {
+    let current = node;
+    while (current && current !== document.body && current !== document.documentElement) {
+      if (isScrollableNode(current)) return current;
+      current = current.parentElement || (current.getRootNode && current.getRootNode().host);
+    }
+    if (isScrollableNode(document.scrollingElement)) return document.scrollingElement;
+    return null;
+  };
+
+  const resolveScrollTarget = (event) => {
+    const candidates = [];
+    if (event && event.composedPath) {
+      candidates.push(...event.composedPath());
+    }
+    if (event && event.target) {
+      candidates.push(event.target);
+    }
+    if (document.activeElement) {
+      candidates.push(document.activeElement);
+    }
+    if (lastPointerTarget) {
+      candidates.push(lastPointerTarget);
+    }
+    for (const candidate of candidates) {
+      const target = getNearestScrollableAncestor(candidate);
+      if (target) {
+        return { isWindow: false, element: target };
+      }
+    }
+    return { isWindow: true, element: document.scrollingElement || document.documentElement };
   };
 
   const ensureStyle = () => {
@@ -569,26 +613,50 @@
     const dt = Math.min(64, ts - scrollLastTs);
     scrollLastTs = ts;
     const delta = scrollDirection * SCROLL_SPEED * (dt / 1000) * scrollMultiplier;
-    window.scrollBy(0, delta);
+    if (scrollTargetIsWindow) {
+      window.scrollBy(0, delta);
+    } else if (scrollTargetEl) {
+      scrollTargetEl.scrollTop += delta;
+    }
     scrollRafId = requestAnimationFrame(stepScroll);
   };
 
-  const startScroll = (direction, multiplier) => {
+  const startScroll = (direction, multiplier, event) => {
     scrollDirection = direction;
     scrollMultiplier = multiplier;
+    if (!scrollTargetEl || event) {
+      const target = resolveScrollTarget(event);
+      scrollTargetIsWindow = target.isWindow;
+      scrollTargetEl = target.element;
+    }
     if (scrollRafId === null) {
       scrollLastTs = performance.now();
-      window.scrollBy(0, direction * 18 * multiplier);
+      if (scrollTargetIsWindow) {
+        window.scrollBy(0, direction * 18 * multiplier);
+      } else if (scrollTargetEl) {
+        scrollTargetEl.scrollTop += direction * 18 * multiplier;
+      }
       scrollRafId = requestAnimationFrame(stepScroll);
     }
   };
 
-  const jumpToEdge = (direction) => {
-    const doc = document.documentElement;
-    const maxY = Math.max(0, doc.scrollHeight - window.innerHeight);
-    const target = direction < 0 ? 0 : maxY;
+  const jumpToEdge = (direction, event) => {
+    const target = resolveScrollTarget(event);
+    scrollTargetIsWindow = target.isWindow;
+    scrollTargetEl = target.element;
+    if (scrollTargetIsWindow) {
+      const doc = document.scrollingElement || document.documentElement;
+      const maxY = Math.max(0, doc.scrollHeight - window.innerHeight);
+      const jumpTarget = direction < 0 ? 0 : maxY;
+      const offset = direction < 0 ? SCROLL_JUMP_PADDING : -SCROLL_JUMP_PADDING;
+      window.scrollTo({ top: Math.max(0, Math.min(maxY, jumpTarget + offset)) });
+      return;
+    }
+    if (!scrollTargetEl) return;
+    const maxY = Math.max(0, scrollTargetEl.scrollHeight - scrollTargetEl.clientHeight);
+    const jumpTarget = direction < 0 ? 0 : maxY;
     const offset = direction < 0 ? SCROLL_JUMP_PADDING : -SCROLL_JUMP_PADDING;
-    window.scrollTo({ top: Math.max(0, Math.min(maxY, target + offset)) });
+    scrollTargetEl.scrollTop = Math.max(0, Math.min(maxY, jumpTarget + offset));
   };
 
   const onKeyDown = (event) => {
@@ -645,7 +713,7 @@
     const lowerKey = key && key.toLowerCase ? key.toLowerCase() : key;
     if (event.shiftKey && lowerKey === 'g') {
       event.preventDefault();
-      jumpToEdge(1);
+      jumpToEdge(1, event);
       clearNumericPrefix();
       clearGPending();
       return;
@@ -654,19 +722,19 @@
       clearGPending();
       if (lowerKey === 'g') {
         event.preventDefault();
-        jumpToEdge(-1);
+        jumpToEdge(-1, event);
         clearNumericPrefix();
         return;
       }
       if (lowerKey === 'k') {
         event.preventDefault();
-        jumpToEdge(-1);
+        jumpToEdge(-1, event);
         clearNumericPrefix();
         return;
       }
       if (lowerKey === 'j') {
         event.preventDefault();
-        jumpToEdge(1);
+        jumpToEdge(1, event);
         clearNumericPrefix();
         return;
       }
@@ -688,7 +756,7 @@
       }
       lastNavKey = lowerKey;
       const multiplier = getNumericMultiplier();
-      startScroll(lowerKey === 'j' ? 1 : -1, multiplier);
+      startScroll(lowerKey === 'j' ? 1 : -1, multiplier, event);
       return;
     }
 
@@ -718,6 +786,9 @@
   document.addEventListener('keydown', onKeyDown, true);
   document.addEventListener('keydown', onKeyDownNav, true);
   document.addEventListener('keyup', onKeyUpNav, true);
+  document.addEventListener('pointerdown', (event) => {
+    lastPointerTarget = event.target;
+  }, true);
   window.addEventListener('blur', stopScroll);
 
   const runImageHostAudit = () => {

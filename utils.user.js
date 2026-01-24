@@ -639,9 +639,32 @@
     return results;
   };
 
+  const sortYoutubeResults = (items, sortValue) => {
+    if (!sortValue || sortValue === 'none') return items;
+    const sorted = [...items];
+    if (sortValue === 'views-desc') {
+      sorted.sort((a, b) => (b.viewsCount || 0) - (a.viewsCount || 0));
+    } else if (sortValue === 'views-asc') {
+      sorted.sort((a, b) => (a.viewsCount || 0) - (b.viewsCount || 0));
+    } else if (sortValue === 'time-desc') {
+      sorted.sort((a, b) => (a.ageSeconds || 0) - (b.ageSeconds || 0));
+    } else if (sortValue === 'time-asc') {
+      sorted.sort((a, b) => (b.ageSeconds || 0) - (a.ageSeconds || 0));
+    }
+    return sorted;
+  };
+
   const applyYoutubeFilters = () => {
     if (!ytVideoOverlayState) return;
-    const { viewsInput, timeInput, listEl, statusEl, copyFilteredJsonBtn, copyFilteredUrlsBtn } = ytVideoOverlayState;
+    const {
+      viewsInput,
+      timeInput,
+      sortSelect,
+      listEl,
+      statusEl,
+      copyFilteredJsonBtn,
+      copyFilteredUrlsBtn
+    } = ytVideoOverlayState;
     const viewsRaw = viewsInput.value.trim();
     const timeRaw = timeInput.value.trim();
     const viewsSpec = parseComparator(viewsRaw, { defaultOp: '>=' });
@@ -657,13 +680,14 @@
         : compareValue(item.ageSeconds, timeSpec.op, timeThreshold);
       return viewsOk && timeOk;
     });
-    ytVideoOverlayState.filtered = filtered;
-    statusEl.textContent = `${filtered.length} / ${ytVideoLastResults.length} shown`;
-    listEl.textContent = filtered.length
-      ? JSON.stringify(filtered, null, 2)
+    const sorted = sortYoutubeResults(filtered, sortSelect ? sortSelect.value : 'none');
+    ytVideoOverlayState.filtered = sorted;
+    statusEl.textContent = `${sorted.length} / ${ytVideoLastResults.length} shown`;
+    listEl.textContent = sorted.length
+      ? JSON.stringify(sorted, null, 2)
       : 'No videos match the current filters.';
-    copyFilteredJsonBtn.disabled = filtered.length === 0;
-    copyFilteredUrlsBtn.disabled = filtered.length === 0;
+    copyFilteredJsonBtn.disabled = sorted.length === 0;
+    copyFilteredUrlsBtn.disabled = sorted.length === 0;
   };
 
   const openYoutubeVideoPanel = () => {
@@ -817,12 +841,27 @@
     timeInput.type = 'text';
     timeInput.className = 'yt-panel-input';
     timeInput.placeholder = 'Time filter (e.g. <3 months ago)';
+    const sortSelect = document.createElement('select');
+    sortSelect.className = 'yt-panel-input';
+    const sortOptions = [
+      { value: 'none', label: 'Sort: none' },
+      { value: 'views-desc', label: 'Views: high to low' },
+      { value: 'views-asc', label: 'Views: low to high' },
+      { value: 'time-desc', label: 'Time: newest first' },
+      { value: 'time-asc', label: 'Time: oldest first' }
+    ];
+    sortOptions.forEach((opt) => {
+      const option = document.createElement('option');
+      option.value = opt.value;
+      option.textContent = opt.label;
+      sortSelect.appendChild(option);
+    });
     const applyBtn = document.createElement('button');
     applyBtn.type = 'button';
     applyBtn.className = 'utils-btn secondary';
     applyBtn.textContent = 'Apply filters';
     applyBtn.addEventListener('click', () => applyYoutubeFilters());
-    filterRow.append(viewsInput, timeInput, applyBtn);
+    filterRow.append(viewsInput, timeInput, sortSelect, applyBtn);
 
     const hint = document.createElement('div');
     hint.className = 'yt-panel-muted';
@@ -863,12 +902,12 @@
     const copyFilteredUrlsBtn = document.createElement('button');
     copyFilteredUrlsBtn.type = 'button';
     copyFilteredUrlsBtn.className = 'utils-btn secondary';
-    copyFilteredUrlsBtn.textContent = 'Copy filtered URLs JSON';
+    copyFilteredUrlsBtn.textContent = 'Copy filtered URLs';
     copyFilteredUrlsBtn.disabled = true;
     copyFilteredUrlsBtn.addEventListener('click', () => {
       if (!ytVideoOverlayState || !ytVideoOverlayState.filtered.length) return;
       const urls = ytVideoOverlayState.filtered.map((item) => item.url).filter(Boolean);
-      copyTextToClipboard(JSON.stringify(urls, null, 2));
+      copyTextToClipboard(urls.join('\n'));
     });
     actions.append(copyAllJsonBtn, copyFilteredJsonBtn, copyAllUrlsBtn, copyFilteredUrlsBtn);
 
@@ -878,6 +917,7 @@
     ytVideoOverlayState = {
       viewsInput,
       timeInput,
+      sortSelect,
       listEl,
       statusEl,
       copyFilteredJsonBtn,
@@ -897,6 +937,7 @@
         applyYoutubeFilters();
       }
     });
+    sortSelect.addEventListener('change', () => applyYoutubeFilters());
   };
 
   const flashElement = (el) => {

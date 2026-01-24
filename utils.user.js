@@ -35,6 +35,10 @@
   let menuOpenedOnce = false;
   let vimiumLiteEnabled = true;
   let vimiumLiteButton = null;
+  let ytVideoListEl = null;
+  let ytVideoStatusEl = null;
+  let ytVideoCopyBtn = null;
+  let ytVideoLastResults = [];
   let scrollDirection = 0;
   let scrollMultiplier = 1;
   let scrollRafId = null;
@@ -340,6 +344,37 @@
     auditDesc.textContent = 'Highlights images, iframes, and page links with a draggable report panel.';
     auditSection.append(auditTitle, auditBtn, auditDesc);
 
+    const ytSection = document.createElement('div');
+    ytSection.className = 'utils-section';
+    const ytTitle = document.createElement('h3');
+    ytTitle.textContent = 'YouTube Videos';
+    const ytControls = document.createElement('div');
+    ytControls.className = 'utils-btn-row';
+    ytVideoStatusEl = document.createElement('div');
+    ytVideoStatusEl.textContent = 'No scan yet';
+    ytVideoStatusEl.style.flex = '1';
+    const ytScanBtn = document.createElement('button');
+    ytScanBtn.type = 'button';
+    ytScanBtn.className = 'utils-btn';
+    ytScanBtn.textContent = 'Scan videos';
+    ytScanBtn.addEventListener('click', () => analyzeVisibleYoutubeVideos());
+    ytVideoCopyBtn = document.createElement('button');
+    ytVideoCopyBtn.type = 'button';
+    ytVideoCopyBtn.className = 'utils-btn secondary';
+    ytVideoCopyBtn.textContent = 'Copy JSON';
+    ytVideoCopyBtn.disabled = true;
+    ytVideoCopyBtn.addEventListener('click', () => {
+      if (!ytVideoLastResults.length) return;
+      copyTextToClipboard(JSON.stringify(ytVideoLastResults, null, 2));
+    });
+    ytControls.append(ytVideoStatusEl, ytScanBtn, ytVideoCopyBtn);
+    ytVideoListEl = document.createElement('div');
+    ytVideoListEl.className = 'utils-list';
+    ytVideoListEl.textContent = 'Click scan to list videos (title, views, time).';
+    const ytDesc = document.createElement('p');
+    ytDesc.textContent = 'Targets YouTube /videos grids and returns all loaded cards.';
+    ytSection.append(ytTitle, ytControls, ytDesc, ytVideoListEl);
+
     const rightClickSection = document.createElement('div');
     rightClickSection.className = 'utils-section';
     const rightClickTitle = document.createElement('h3');
@@ -417,7 +452,7 @@
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, auditSection, rightClickSection, navSection, footer);
+    panel.append(header, auditSection, ytSection, rightClickSection, navSection, footer);
     menuEl = panel;
     updateRightClickModeButtons();
     updateRightClickListUI();
@@ -466,6 +501,40 @@
       }
     } catch (err) {
       console.error('Clipboard copy failed:', err);
+    }
+  };
+
+  const collectYoutubeVideos = () => {
+    const candidates = Array.from(document.querySelectorAll('ytd-rich-grid-media, ytd-grid-video-renderer'));
+    const results = [];
+    for (const item of candidates) {
+      const titleEl = item.querySelector('#video-title');
+      const meta = item.querySelectorAll('#metadata-line span');
+      const name = titleEl ? titleEl.textContent.trim() : '';
+      const views = meta[0] ? meta[0].textContent.trim() : '';
+      const time = meta[1] ? meta[1].textContent.trim() : '';
+      if (!name && !views && !time) continue;
+      results.push({ name, views, time });
+    }
+    return results;
+  };
+
+  const analyzeVisibleYoutubeVideos = () => {
+    if (!ytVideoListEl || !ytVideoStatusEl) return;
+    const results = collectYoutubeVideos();
+    ytVideoLastResults = results;
+    if (!results.length) {
+      ytVideoStatusEl.textContent = '0 found';
+      ytVideoListEl.textContent = 'No visible YouTube video cards detected.';
+      if (ytVideoCopyBtn) {
+        ytVideoCopyBtn.disabled = true;
+      }
+      return;
+    }
+    ytVideoStatusEl.textContent = `${results.length} found`;
+    ytVideoListEl.textContent = JSON.stringify(results, null, 2);
+    if (ytVideoCopyBtn) {
+      ytVideoCopyBtn.disabled = false;
     }
   };
 

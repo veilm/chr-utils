@@ -521,6 +521,29 @@
     return Math.round(value * factor);
   };
 
+  const parseDurationSeconds = (rawDuration) => {
+    if (!rawDuration) return null;
+    const cleaned = rawDuration.trim();
+    if (!cleaned) return null;
+    const parts = cleaned.split(':').map((part) => part.trim());
+    if (!parts.length || parts.some((part) => part === '' || Number.isNaN(Number(part)))) {
+      return null;
+    }
+    const numbers = parts.map((part) => Number.parseInt(part, 10));
+    if (numbers.some((value) => !Number.isFinite(value))) return null;
+    let seconds = 0;
+    if (numbers.length === 3) {
+      seconds = numbers[0] * 3600 + numbers[1] * 60 + numbers[2];
+    } else if (numbers.length === 2) {
+      seconds = numbers[0] * 60 + numbers[1];
+    } else if (numbers.length === 1) {
+      seconds = numbers[0];
+    } else {
+      return null;
+    }
+    return seconds;
+  };
+
   const parseNumericInput = (rawValue) => {
     if (!rawValue) return null;
     const trimmed = rawValue.trim();
@@ -555,6 +578,16 @@
     const factor = unitSeconds[unit];
     if (!factor) return null;
     return Math.round(value * factor);
+  };
+
+  const parseClockDurationInputSeconds = (rawValue) => {
+    if (!rawValue) return null;
+    const trimmed = rawValue.trim();
+    if (!trimmed) return null;
+    if (trimmed.includes(':')) {
+      return parseDurationSeconds(trimmed);
+    }
+    return parseDurationInputSeconds(trimmed);
   };
 
   const parseComparator = (rawValue, { defaultOp = '>=' } = {}) => {
@@ -617,14 +650,18 @@
       const titleEl = item.querySelector('#video-title');
       const meta = item.querySelectorAll('#metadata-line span');
       const linkEl = item.querySelector('a#thumbnail') || item.querySelector('a#video-title');
+      const durationEl = item.querySelector('ytd-thumbnail-overlay-time-status-renderer span') ||
+        item.querySelector('ytd-thumbnail-overlay-time-status-renderer #text');
       const rawHref = linkEl ? linkEl.getAttribute('href') : '';
       const id = extractYoutubeId(rawHref || '');
       const url = normalizeYoutubeUrl(rawHref || '', id);
       const name = titleEl ? titleEl.textContent.trim() : '';
       const views = meta[0] ? meta[0].textContent.trim() : '';
       const time = meta[1] ? meta[1].textContent.trim() : '';
+      const duration = durationEl ? durationEl.textContent.trim() : '';
       const viewsCount = parseViewsCount(views);
       const ageSeconds = parseAgeSeconds(time);
+      const durationSeconds = parseDurationSeconds(duration);
       if (!name && !views && !time && !url) continue;
       results.push({
         name,
@@ -632,6 +669,8 @@
         time,
         viewsCount,
         ageSeconds,
+        duration,
+        durationSeconds,
         id,
         url
       });
@@ -650,6 +689,10 @@
       sorted.sort((a, b) => (a.ageSeconds || 0) - (b.ageSeconds || 0));
     } else if (sortValue === 'time-asc') {
       sorted.sort((a, b) => (b.ageSeconds || 0) - (a.ageSeconds || 0));
+    } else if (sortValue === 'duration-desc') {
+      sorted.sort((a, b) => (b.durationSeconds || 0) - (a.durationSeconds || 0));
+    } else if (sortValue === 'duration-asc') {
+      sorted.sort((a, b) => (a.durationSeconds || 0) - (b.durationSeconds || 0));
     }
     return sorted;
   };
@@ -659,6 +702,7 @@
     const {
       viewsInput,
       timeInput,
+      durationInput,
       sortSelect,
       listEl,
       statusEl,
@@ -667,10 +711,13 @@
     } = ytVideoOverlayState;
     const viewsRaw = viewsInput.value.trim();
     const timeRaw = timeInput.value.trim();
+    const durationRaw = durationInput.value.trim();
     const viewsSpec = parseComparator(viewsRaw, { defaultOp: '>=' });
     const timeSpec = parseComparator(timeRaw, { defaultOp: '<=' });
+    const durationSpec = parseComparator(durationRaw, { defaultOp: '<=' });
     const viewsThreshold = viewsSpec.value ? parseNumericInput(viewsSpec.value) : null;
     const timeThreshold = timeSpec.value ? parseDurationInputSeconds(timeSpec.value) : null;
+    const durationThreshold = durationSpec.value ? parseClockDurationInputSeconds(durationSpec.value) : null;
     const filtered = ytVideoLastResults.filter((item) => {
       const viewsOk = viewsThreshold === null
         ? true
@@ -678,7 +725,10 @@
       const timeOk = timeThreshold === null
         ? true
         : compareValue(item.ageSeconds, timeSpec.op, timeThreshold);
-      return viewsOk && timeOk;
+      const durationOk = durationThreshold === null
+        ? true
+        : compareValue(item.durationSeconds, durationSpec.op, durationThreshold);
+      return viewsOk && timeOk && durationOk;
     });
     const sorted = sortYoutubeResults(filtered, sortSelect ? sortSelect.value : 'none');
     ytVideoOverlayState.filtered = sorted;
@@ -841,6 +891,10 @@
     timeInput.type = 'text';
     timeInput.className = 'yt-panel-input';
     timeInput.placeholder = 'Time filter (e.g. <3 months ago)';
+    const durationInput = document.createElement('input');
+    durationInput.type = 'text';
+    durationInput.className = 'yt-panel-input';
+    durationInput.placeholder = 'Duration (e.g. <12:00 or >15 minutes)';
     const sortSelect = document.createElement('select');
     sortSelect.className = 'yt-panel-input';
     const sortOptions = [
@@ -848,7 +902,9 @@
       { value: 'views-desc', label: 'Views: high to low' },
       { value: 'views-asc', label: 'Views: low to high' },
       { value: 'time-desc', label: 'Time: newest first' },
-      { value: 'time-asc', label: 'Time: oldest first' }
+      { value: 'time-asc', label: 'Time: oldest first' },
+      { value: 'duration-desc', label: 'Duration: long to short' },
+      { value: 'duration-asc', label: 'Duration: short to long' }
     ];
     sortOptions.forEach((opt) => {
       const option = document.createElement('option');
@@ -861,11 +917,11 @@
     applyBtn.className = 'utils-btn secondary';
     applyBtn.textContent = 'Apply filters';
     applyBtn.addEventListener('click', () => applyYoutubeFilters());
-    filterRow.append(viewsInput, timeInput, sortSelect, applyBtn);
+    filterRow.append(viewsInput, timeInput, durationInput, sortSelect, applyBtn);
 
     const hint = document.createElement('div');
     hint.className = 'yt-panel-muted';
-    hint.textContent = 'Filters accept >, <, >=, <= with k/m/b and time units (minute/hour/day/week/month/year).';
+    hint.textContent = 'Filters accept >, <, >=, <= with k/m/b and time units (minute/hour/day/week/month/year). Duration supports mm:ss or h:mm:ss.';
 
     const listEl = document.createElement('div');
     listEl.className = 'yt-panel-list';
@@ -917,6 +973,7 @@
     ytVideoOverlayState = {
       viewsInput,
       timeInput,
+      durationInput,
       sortSelect,
       listEl,
       statusEl,
@@ -932,6 +989,12 @@
       }
     });
     timeInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        applyYoutubeFilters();
+      }
+    });
+    durationInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
         applyYoutubeFilters();

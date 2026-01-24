@@ -1196,6 +1196,7 @@
   const onKeyDown = (event) => {
     if (event.repeat) return;
     if (menuEl && menuEl.isConnected) {
+      if (shouldIgnoreKeyEvent(event)) return;
       if (event.key === '1') {
         event.preventDefault();
         setRightClickMode(RIGHT_CLICK_MODE_DISABLED);

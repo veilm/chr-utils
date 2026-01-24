@@ -35,10 +35,8 @@
   let menuOpenedOnce = false;
   let vimiumLiteEnabled = true;
   let vimiumLiteButton = null;
-  let ytVideoListEl = null;
-  let ytVideoStatusEl = null;
-  let ytVideoCopyBtn = null;
   let ytVideoLastResults = [];
+  let ytVideoOverlayState = null;
   let scrollDirection = 0;
   let scrollMultiplier = 1;
   let scrollRafId = null;
@@ -344,37 +342,6 @@
     auditDesc.textContent = 'Highlights images, iframes, and page links with a draggable report panel.';
     auditSection.append(auditTitle, auditBtn, auditDesc);
 
-    const ytSection = document.createElement('div');
-    ytSection.className = 'utils-section';
-    const ytTitle = document.createElement('h3');
-    ytTitle.textContent = 'YouTube Videos';
-    const ytControls = document.createElement('div');
-    ytControls.className = 'utils-btn-row';
-    ytVideoStatusEl = document.createElement('div');
-    ytVideoStatusEl.textContent = 'No scan yet';
-    ytVideoStatusEl.style.flex = '1';
-    const ytScanBtn = document.createElement('button');
-    ytScanBtn.type = 'button';
-    ytScanBtn.className = 'utils-btn';
-    ytScanBtn.textContent = 'Scan videos';
-    ytScanBtn.addEventListener('click', () => analyzeVisibleYoutubeVideos());
-    ytVideoCopyBtn = document.createElement('button');
-    ytVideoCopyBtn.type = 'button';
-    ytVideoCopyBtn.className = 'utils-btn secondary';
-    ytVideoCopyBtn.textContent = 'Copy JSON';
-    ytVideoCopyBtn.disabled = true;
-    ytVideoCopyBtn.addEventListener('click', () => {
-      if (!ytVideoLastResults.length) return;
-      copyTextToClipboard(JSON.stringify(ytVideoLastResults, null, 2));
-    });
-    ytControls.append(ytVideoStatusEl, ytScanBtn, ytVideoCopyBtn);
-    ytVideoListEl = document.createElement('div');
-    ytVideoListEl.className = 'utils-list';
-    ytVideoListEl.textContent = 'Click scan to list videos (title, views, time).';
-    const ytDesc = document.createElement('p');
-    ytDesc.textContent = 'Targets YouTube /videos grids and returns all loaded cards.';
-    ytSection.append(ytTitle, ytControls, ytDesc, ytVideoListEl);
-
     const rightClickSection = document.createElement('div');
     rightClickSection.className = 'utils-section';
     const rightClickTitle = document.createElement('h3');
@@ -448,11 +415,24 @@
     navDesc.textContent = 'J/K scroll, G/big G jump, and numeric prefixes for speed.';
     navSection.append(navTitle, vimiumLiteButton, navDesc);
 
+    const ytSection = document.createElement('div');
+    ytSection.className = 'utils-section';
+    const ytTitle = document.createElement('h3');
+    ytTitle.textContent = 'YouTube Videos';
+    const ytBtn = document.createElement('button');
+    ytBtn.type = 'button';
+    ytBtn.className = 'utils-btn';
+    ytBtn.textContent = 'Open video analysis panel';
+    ytBtn.addEventListener('click', () => openYoutubeVideoPanel());
+    const ytDesc = document.createElement('p');
+    ytDesc.textContent = 'Scan loaded YouTube cards, filter by views/time, and copy JSON/URLs.';
+    ytSection.append(ytTitle, ytBtn, ytDesc);
+
     const footer = document.createElement('div');
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, auditSection, ytSection, rightClickSection, navSection, footer);
+    panel.append(header, auditSection, rightClickSection, navSection, ytSection, footer);
     menuEl = panel;
     updateRightClickModeButtons();
     updateRightClickListUI();
@@ -504,38 +484,402 @@
     }
   };
 
+  const parseViewsCount = (rawViews) => {
+    if (!rawViews) return null;
+    const lower = rawViews.toLowerCase().replace('views', '').replace('view', '').trim();
+    if (!lower) return null;
+    if (lower.includes('no views')) return 0;
+    const match = lower.replace(/,/g, '').match(/([\d.]+)\s*([kmb])?/i);
+    if (!match) return null;
+    const value = Number.parseFloat(match[1]);
+    if (!Number.isFinite(value)) return null;
+    const suffix = match[2] ? match[2].toLowerCase() : '';
+    const multiplier = suffix === 'k' ? 1e3 : suffix === 'm' ? 1e6 : suffix === 'b' ? 1e9 : 1;
+    return Math.round(value * multiplier);
+  };
+
+  const parseAgeSeconds = (rawTime) => {
+    if (!rawTime) return null;
+    const lower = rawTime.toLowerCase();
+    if (lower.includes('just now')) return 0;
+    const match = lower.match(/(\d+(?:\.\d+)?)\s*(second|minute|hour|day|week|month|year)s?/);
+    if (!match) return null;
+    const value = Number.parseFloat(match[1]);
+    if (!Number.isFinite(value)) return null;
+    const unit = match[2];
+    const unitSeconds = {
+      second: 1,
+      minute: 60,
+      hour: 3600,
+      day: 86400,
+      week: 604800,
+      month: 2592000,
+      year: 31536000
+    };
+    const factor = unitSeconds[unit];
+    if (!factor) return null;
+    return Math.round(value * factor);
+  };
+
+  const parseNumericInput = (rawValue) => {
+    if (!rawValue) return null;
+    const trimmed = rawValue.trim();
+    if (!trimmed) return null;
+    const match = trimmed.toLowerCase().replace(/,/g, '').match(/([\d.]+)\s*([kmb])?/);
+    if (!match) return null;
+    const value = Number.parseFloat(match[1]);
+    if (!Number.isFinite(value)) return null;
+    const suffix = match[2] ? match[2].toLowerCase() : '';
+    const multiplier = suffix === 'k' ? 1e3 : suffix === 'm' ? 1e6 : suffix === 'b' ? 1e9 : 1;
+    return Math.round(value * multiplier);
+  };
+
+  const parseDurationInputSeconds = (rawValue) => {
+    if (!rawValue) return null;
+    const trimmed = rawValue.toLowerCase().replace('ago', '').trim();
+    if (!trimmed) return null;
+    const match = trimmed.match(/(\d+(?:\.\d+)?)\s*(second|minute|hour|day|week|month|year)s?/);
+    if (!match) return null;
+    const value = Number.parseFloat(match[1]);
+    if (!Number.isFinite(value)) return null;
+    const unit = match[2];
+    const unitSeconds = {
+      second: 1,
+      minute: 60,
+      hour: 3600,
+      day: 86400,
+      week: 604800,
+      month: 2592000,
+      year: 31536000
+    };
+    const factor = unitSeconds[unit];
+    if (!factor) return null;
+    return Math.round(value * factor);
+  };
+
+  const parseComparator = (rawValue, { defaultOp = '>=' } = {}) => {
+    if (!rawValue) return { op: null, value: null };
+    const match = rawValue.trim().match(/^(>=|<=|>|<|=)\s*(.+)$/);
+    if (!match) {
+      return { op: defaultOp, value: rawValue.trim() };
+    }
+    return { op: match[1], value: match[2].trim() };
+  };
+
+  const compareValue = (value, op, threshold) => {
+    if (!Number.isFinite(value) || !Number.isFinite(threshold)) return false;
+    if (op === '>') return value > threshold;
+    if (op === '>=') return value >= threshold;
+    if (op === '<') return value < threshold;
+    if (op === '<=') return value <= threshold;
+    if (op === '=') return value === threshold;
+    return false;
+  };
+
+  const extractYoutubeId = (href) => {
+    if (!href) return '';
+    try {
+      const parsed = new URL(href, window.location.origin);
+      if (parsed.hostname === 'youtu.be') {
+        return parsed.pathname.replace('/', '').trim();
+      }
+      if (parsed.pathname.startsWith('/shorts/')) {
+        return parsed.pathname.split('/')[2] || '';
+      }
+      if (parsed.pathname === '/watch') {
+        return parsed.searchParams.get('v') || '';
+      }
+      const vParam = parsed.searchParams.get('v');
+      if (vParam) return vParam;
+      return '';
+    } catch (err) {
+      return '';
+    }
+  };
+
+  const normalizeYoutubeUrl = (href, id) => {
+    if (id) {
+      return `https://www.youtube.com/watch?v=${id}`;
+    }
+    if (!href) return '';
+    try {
+      const parsed = new URL(href, window.location.origin);
+      return parsed.href;
+    } catch (err) {
+      return href;
+    }
+  };
+
   const collectYoutubeVideos = () => {
     const candidates = Array.from(document.querySelectorAll('ytd-rich-grid-media, ytd-grid-video-renderer'));
     const results = [];
     for (const item of candidates) {
       const titleEl = item.querySelector('#video-title');
       const meta = item.querySelectorAll('#metadata-line span');
+      const linkEl = item.querySelector('a#thumbnail') || item.querySelector('a#video-title');
+      const rawHref = linkEl ? linkEl.getAttribute('href') : '';
+      const id = extractYoutubeId(rawHref || '');
+      const url = normalizeYoutubeUrl(rawHref || '', id);
       const name = titleEl ? titleEl.textContent.trim() : '';
       const views = meta[0] ? meta[0].textContent.trim() : '';
       const time = meta[1] ? meta[1].textContent.trim() : '';
-      if (!name && !views && !time) continue;
-      results.push({ name, views, time });
+      const viewsCount = parseViewsCount(views);
+      const ageSeconds = parseAgeSeconds(time);
+      if (!name && !views && !time && !url) continue;
+      results.push({
+        name,
+        views,
+        time,
+        viewsCount,
+        ageSeconds,
+        id,
+        url
+      });
     }
     return results;
   };
 
-  const analyzeVisibleYoutubeVideos = () => {
-    if (!ytVideoListEl || !ytVideoStatusEl) return;
-    const results = collectYoutubeVideos();
-    ytVideoLastResults = results;
-    if (!results.length) {
-      ytVideoStatusEl.textContent = '0 found';
-      ytVideoListEl.textContent = 'No visible YouTube video cards detected.';
-      if (ytVideoCopyBtn) {
-        ytVideoCopyBtn.disabled = true;
+  const applyYoutubeFilters = () => {
+    if (!ytVideoOverlayState) return;
+    const { viewsInput, timeInput, listEl, statusEl, copyFilteredJsonBtn, copyFilteredUrlsBtn } = ytVideoOverlayState;
+    const viewsRaw = viewsInput.value.trim();
+    const timeRaw = timeInput.value.trim();
+    const viewsSpec = parseComparator(viewsRaw, { defaultOp: '>=' });
+    const timeSpec = parseComparator(timeRaw, { defaultOp: '<=' });
+    const viewsThreshold = viewsSpec.value ? parseNumericInput(viewsSpec.value) : null;
+    const timeThreshold = timeSpec.value ? parseDurationInputSeconds(timeSpec.value) : null;
+    const filtered = ytVideoLastResults.filter((item) => {
+      const viewsOk = viewsThreshold === null
+        ? true
+        : compareValue(item.viewsCount, viewsSpec.op, viewsThreshold);
+      const timeOk = timeThreshold === null
+        ? true
+        : compareValue(item.ageSeconds, timeSpec.op, timeThreshold);
+      return viewsOk && timeOk;
+    });
+    ytVideoOverlayState.filtered = filtered;
+    statusEl.textContent = `${filtered.length} / ${ytVideoLastResults.length} shown`;
+    listEl.textContent = filtered.length
+      ? JSON.stringify(filtered, null, 2)
+      : 'No videos match the current filters.';
+    copyFilteredJsonBtn.disabled = filtered.length === 0;
+    copyFilteredUrlsBtn.disabled = filtered.length === 0;
+  };
+
+  const openYoutubeVideoPanel = () => {
+    const OVERLAY_ID = 'yt-video-audit-overlay';
+    const STYLE_ID = 'yt-video-audit-style';
+    const existing = document.getElementById(OVERLAY_ID);
+    if (existing) {
+      existing.remove();
+    }
+    const existingStyle = document.getElementById(STYLE_ID);
+    if (existingStyle) {
+      existingStyle.remove();
+    }
+
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      #${OVERLAY_ID} {
+        position: fixed;
+        top: 18px;
+        left: 18px;
+        width: min(520px, calc(100vw - 36px));
+        max-height: calc(100vh - 36px);
+        overflow: auto;
+        background: rgba(16, 16, 16, 0.97);
+        color: #f1f1f1;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 13px;
+        line-height: 1.4;
+        border-radius: 0;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+        z-index: 2147483647;
+        padding: 14px 16px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
       }
-      return;
-    }
-    ytVideoStatusEl.textContent = `${results.length} found`;
-    ytVideoListEl.textContent = JSON.stringify(results, null, 2);
-    if (ytVideoCopyBtn) {
-      ytVideoCopyBtn.disabled = false;
-    }
+      #${OVERLAY_ID} .yt-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      #${OVERLAY_ID} .yt-panel-title {
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      #${OVERLAY_ID} .yt-panel-close {
+        border: none;
+        background: transparent;
+        color: #f87171;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+      }
+      #${OVERLAY_ID} .yt-panel-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      #${OVERLAY_ID} .yt-panel-input {
+        flex: 1;
+        min-width: 140px;
+        background: #101010;
+        color: #f1f1f1;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        padding: 6px 8px;
+        font-size: 12px;
+      }
+      #${OVERLAY_ID} .yt-panel-list {
+        margin-top: 8px;
+        padding: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(10, 10, 10, 0.7);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+        max-height: 300px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #${OVERLAY_ID} .yt-panel-muted {
+        color: #b8b8b8;
+        font-size: 12px;
+      }
+      #${OVERLAY_ID} .yt-panel-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
+    `;
+    document.head.appendChild(style);
+
+    const overlay = document.createElement('div');
+    overlay.id = OVERLAY_ID;
+
+    const header = document.createElement('div');
+    header.className = 'yt-panel-header';
+    const title = document.createElement('div');
+    title.className = 'yt-panel-title';
+    title.textContent = 'YouTube Video Analysis';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'yt-panel-close';
+    closeBtn.textContent = '\u2715';
+    closeBtn.addEventListener('click', () => overlay.remove());
+    header.append(title, closeBtn);
+
+    const scanRow = document.createElement('div');
+    scanRow.className = 'yt-panel-row';
+    const statusEl = document.createElement('div');
+    statusEl.textContent = 'No scan yet';
+    statusEl.style.flex = '1';
+    const scanBtn = document.createElement('button');
+    scanBtn.type = 'button';
+    scanBtn.className = 'utils-btn';
+    scanBtn.textContent = 'Scan page';
+    scanBtn.addEventListener('click', () => {
+      ytVideoLastResults = collectYoutubeVideos();
+      statusEl.textContent = `${ytVideoLastResults.length} found`;
+      applyYoutubeFilters();
+    });
+    scanRow.append(statusEl, scanBtn);
+
+    const filterRow = document.createElement('div');
+    filterRow.className = 'yt-panel-row';
+    const viewsInput = document.createElement('input');
+    viewsInput.type = 'text';
+    viewsInput.className = 'yt-panel-input';
+    viewsInput.placeholder = 'Views filter (e.g. >5k)';
+    const timeInput = document.createElement('input');
+    timeInput.type = 'text';
+    timeInput.className = 'yt-panel-input';
+    timeInput.placeholder = 'Time filter (e.g. <3 months ago)';
+    const applyBtn = document.createElement('button');
+    applyBtn.type = 'button';
+    applyBtn.className = 'utils-btn secondary';
+    applyBtn.textContent = 'Apply filters';
+    applyBtn.addEventListener('click', () => applyYoutubeFilters());
+    filterRow.append(viewsInput, timeInput, applyBtn);
+
+    const hint = document.createElement('div');
+    hint.className = 'yt-panel-muted';
+    hint.textContent = 'Filters accept >, <, >=, <= with k/m/b and time units (minute/hour/day/week/month/year).';
+
+    const listEl = document.createElement('div');
+    listEl.className = 'yt-panel-list';
+    listEl.textContent = 'Click scan to list videos.';
+
+    const actions = document.createElement('div');
+    actions.className = 'yt-panel-actions';
+    const copyAllJsonBtn = document.createElement('button');
+    copyAllJsonBtn.type = 'button';
+    copyAllJsonBtn.className = 'utils-btn secondary';
+    copyAllJsonBtn.textContent = 'Copy all JSON';
+    copyAllJsonBtn.addEventListener('click', () => {
+      if (!ytVideoLastResults.length) return;
+      copyTextToClipboard(JSON.stringify(ytVideoLastResults, null, 2));
+    });
+    const copyFilteredJsonBtn = document.createElement('button');
+    copyFilteredJsonBtn.type = 'button';
+    copyFilteredJsonBtn.className = 'utils-btn secondary';
+    copyFilteredJsonBtn.textContent = 'Copy filtered JSON';
+    copyFilteredJsonBtn.disabled = true;
+    copyFilteredJsonBtn.addEventListener('click', () => {
+      if (!ytVideoOverlayState || !ytVideoOverlayState.filtered.length) return;
+      copyTextToClipboard(JSON.stringify(ytVideoOverlayState.filtered, null, 2));
+    });
+    const copyAllUrlsBtn = document.createElement('button');
+    copyAllUrlsBtn.type = 'button';
+    copyAllUrlsBtn.className = 'utils-btn secondary';
+    copyAllUrlsBtn.textContent = 'Copy all URLs';
+    copyAllUrlsBtn.addEventListener('click', () => {
+      if (!ytVideoLastResults.length) return;
+      const urls = ytVideoLastResults.map((item) => item.url).filter(Boolean);
+      copyTextToClipboard(urls.join('\n'));
+    });
+    const copyFilteredUrlsBtn = document.createElement('button');
+    copyFilteredUrlsBtn.type = 'button';
+    copyFilteredUrlsBtn.className = 'utils-btn secondary';
+    copyFilteredUrlsBtn.textContent = 'Copy filtered URLs JSON';
+    copyFilteredUrlsBtn.disabled = true;
+    copyFilteredUrlsBtn.addEventListener('click', () => {
+      if (!ytVideoOverlayState || !ytVideoOverlayState.filtered.length) return;
+      const urls = ytVideoOverlayState.filtered.map((item) => item.url).filter(Boolean);
+      copyTextToClipboard(JSON.stringify(urls, null, 2));
+    });
+    actions.append(copyAllJsonBtn, copyFilteredJsonBtn, copyAllUrlsBtn, copyFilteredUrlsBtn);
+
+    overlay.append(header, scanRow, filterRow, hint, actions, listEl);
+    document.body.appendChild(overlay);
+
+    ytVideoOverlayState = {
+      viewsInput,
+      timeInput,
+      listEl,
+      statusEl,
+      copyFilteredJsonBtn,
+      copyFilteredUrlsBtn,
+      filtered: []
+    };
+
+    viewsInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        applyYoutubeFilters();
+      }
+    });
+    timeInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        applyYoutubeFilters();
+      }
+    });
   };
 
   const flashElement = (el) => {

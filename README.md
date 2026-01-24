@@ -13,7 +13,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
   - gg to jump to top, Shift+G to jump to bottom
   - g then j/k for bottom/top
 - Image host audit overlay (highlights images, iframes, and links)
-- YouTube visible videos scan (title, views, timestamp for visible cards)
+- YouTube video scan panel with filters (title, views, timestamp, URLs, normalized counts)
 
 ## Files
 

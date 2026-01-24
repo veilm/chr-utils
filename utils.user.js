@@ -683,21 +683,22 @@
     style.textContent = `
       #${OVERLAY_ID} {
         position: fixed;
-        top: 18px;
-        left: 18px;
-        width: min(520px, calc(100vw - 36px));
-        max-height: calc(100vh - 36px);
+        top: 16px;
+        left: 16px;
+        width: min(520px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
         overflow: auto;
-        background: rgba(16, 16, 16, 0.97);
-        color: #f1f1f1;
+        background: rgba(12, 12, 12, 0.96);
+        color: #f3f3f3;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         font-size: 13px;
         line-height: 1.4;
         border-radius: 0;
-        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
         z-index: 2147483647;
-        padding: 14px 16px 16px;
+        padding: 12px 14px 16px;
         border: 1px solid rgba(255, 255, 255, 0.08);
+        box-sizing: border-box;
       }
       #${OVERLAY_ID} .yt-panel-header {
         display: flex;
@@ -706,9 +707,8 @@
         margin-bottom: 10px;
       }
       #${OVERLAY_ID} .yt-panel-title {
-        font-size: 15px;
+        font-size: 16px;
         font-weight: 600;
-        letter-spacing: 0.02em;
       }
       #${OVERLAY_ID} .yt-panel-close {
         border: none;
@@ -729,9 +729,9 @@
       #${OVERLAY_ID} .yt-panel-input {
         flex: 1;
         min-width: 140px;
-        background: #101010;
-        color: #f1f1f1;
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(20, 20, 20, 0.9);
+        color: #f3f3f3;
+        border: 1px solid rgba(255, 255, 255, 0.08);
         padding: 6px 8px;
         font-size: 12px;
       }
@@ -755,6 +755,23 @@
         flex-wrap: wrap;
         gap: 6px;
         margin-top: 6px;
+      }
+      #${OVERLAY_ID} .utils-btn {
+        cursor: pointer;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 0;
+        padding: 4px 8px;
+        font-size: 12px;
+        font-weight: 600;
+        background: #2b2b2b;
+        color: #f1f1f1;
+      }
+      #${OVERLAY_ID} .utils-btn.secondary {
+        background: #1f1f1f;
+      }
+      #${OVERLAY_ID} .utils-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
     `;
     document.head.appendChild(style);

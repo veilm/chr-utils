@@ -1255,25 +1255,30 @@
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (menuEl && menuEl.isConnected) return;
     if (!vimiumLiteEnabled) return;
+    const consumeNavEvent = () => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    };
 
     const key = event.key;
     if (event.repeat) {
       const lowerRepeatKey = key && key.toLowerCase ? key.toLowerCase() : key;
       if (lowerRepeatKey === 'j' || lowerRepeatKey === 'k') {
-        event.preventDefault();
+        consumeNavEvent();
       }
       return;
     }
     if (key >= '0' && key <= '9') {
       numericPrefix = key;
       queueNumericPrefixClear();
-      event.preventDefault();
+      consumeNavEvent();
       return;
     }
 
     const lowerKey = key && key.toLowerCase ? key.toLowerCase() : key;
     if (event.shiftKey && lowerKey === 'g') {
-      event.preventDefault();
+      consumeNavEvent();
       jumpToEdge(1, event);
       clearNumericPrefix();
       clearGPending();
@@ -1282,19 +1287,19 @@
     if (gPending) {
       clearGPending();
       if (lowerKey === 'g') {
-        event.preventDefault();
+        consumeNavEvent();
         jumpToEdge(-1, event);
         clearNumericPrefix();
         return;
       }
       if (lowerKey === 'k') {
-        event.preventDefault();
+        consumeNavEvent();
         jumpToEdge(-1, event);
         clearNumericPrefix();
         return;
       }
       if (lowerKey === 'j') {
-        event.preventDefault();
+        consumeNavEvent();
         jumpToEdge(1, event);
         clearNumericPrefix();
         return;
@@ -1302,14 +1307,14 @@
     }
 
     if (lowerKey === 'g') {
-      event.preventDefault();
+      consumeNavEvent();
       setGPending();
       clearNumericPrefix();
       return;
     }
 
     if (lowerKey === 'j' || lowerKey === 'k') {
-      event.preventDefault();
+      consumeNavEvent();
       if (lowerKey === 'j') {
         navJDown = true;
       } else {

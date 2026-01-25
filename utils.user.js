@@ -50,6 +50,7 @@
   let lastNavKey = null;
   let scrollTargetEl = null;
   let scrollTargetIsWindow = true;
+  let scrollBehaviorOverride = null;
   let lastPointerTarget = null;
 
   const shouldIgnoreKeyEvent = (event) => {
@@ -1133,10 +1134,41 @@
   const stopScroll = () => {
     scrollDirection = 0;
     scrollMultiplier = 1;
+    if (scrollBehaviorOverride) {
+      const { element, value } = scrollBehaviorOverride;
+      if (element && element.style) {
+        if (value) {
+          element.style.scrollBehavior = value;
+        } else {
+          element.style.removeProperty('scroll-behavior');
+        }
+      }
+      scrollBehaviorOverride = null;
+    }
     if (scrollRafId !== null) {
       cancelAnimationFrame(scrollRafId);
       scrollRafId = null;
     }
+  };
+
+  const setScrollBehaviorAuto = (element) => {
+    if (!element || !element.style) return;
+    if (scrollBehaviorOverride && scrollBehaviorOverride.element === element) return;
+    if (scrollBehaviorOverride) {
+      const { element: prevEl, value } = scrollBehaviorOverride;
+      if (prevEl && prevEl.style) {
+        if (value) {
+          prevEl.style.scrollBehavior = value;
+        } else {
+          prevEl.style.removeProperty('scroll-behavior');
+        }
+      }
+      scrollBehaviorOverride = null;
+    }
+    const computed = window.getComputedStyle(element).scrollBehavior;
+    if (computed !== 'smooth') return;
+    scrollBehaviorOverride = { element, value: element.style.scrollBehavior };
+    element.style.scrollBehavior = 'auto';
   };
 
   const stepScroll = (ts) => {
@@ -1163,6 +1195,7 @@
       scrollTargetIsWindow = target.isWindow;
       scrollTargetEl = target.element;
     }
+    setScrollBehaviorAuto(scrollTargetEl);
     if (scrollRafId === null) {
       scrollLastTs = performance.now();
       if (scrollTargetIsWindow) {
@@ -1178,12 +1211,30 @@
     const target = resolveScrollTarget(event);
     scrollTargetIsWindow = target.isWindow;
     scrollTargetEl = target.element;
+    const behaviorTarget = scrollTargetEl || (document.scrollingElement || document.documentElement);
+    let prevBehavior = null;
+    let hasBehaviorOverride = false;
+    if (behaviorTarget && behaviorTarget.style) {
+      const computed = window.getComputedStyle(behaviorTarget).scrollBehavior;
+      if (computed === 'smooth') {
+        prevBehavior = behaviorTarget.style.scrollBehavior;
+        behaviorTarget.style.scrollBehavior = 'auto';
+        hasBehaviorOverride = true;
+      }
+    }
     if (scrollTargetIsWindow) {
       const doc = document.scrollingElement || document.documentElement;
       const maxY = Math.max(0, doc.scrollHeight - window.innerHeight);
       const jumpTarget = direction < 0 ? 0 : maxY;
       const offset = direction < 0 ? SCROLL_JUMP_PADDING : -SCROLL_JUMP_PADDING;
       window.scrollTo({ top: Math.max(0, Math.min(maxY, jumpTarget + offset)) });
+      if (hasBehaviorOverride) {
+        if (prevBehavior) {
+          behaviorTarget.style.scrollBehavior = prevBehavior;
+        } else {
+          behaviorTarget.style.removeProperty('scroll-behavior');
+        }
+      }
       return;
     }
     if (!scrollTargetEl) return;
@@ -1191,6 +1242,13 @@
     const jumpTarget = direction < 0 ? 0 : maxY;
     const offset = direction < 0 ? SCROLL_JUMP_PADDING : -SCROLL_JUMP_PADDING;
     scrollTargetEl.scrollTop = Math.max(0, Math.min(maxY, jumpTarget + offset));
+    if (hasBehaviorOverride) {
+      if (prevBehavior) {
+        behaviorTarget.style.scrollBehavior = prevBehavior;
+      } else {
+        behaviorTarget.style.removeProperty('scroll-behavior');
+      }
+    }
   };
 
   const onKeyDown = (event) => {

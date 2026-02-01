@@ -14,6 +14,7 @@
 
   const MENU_ID = 'userscript-utils-menu';
   const STYLE_ID = 'userscript-utils-style';
+  const COPY_TOAST_ID = 'userscript-utils-copy-toast';
   const TOGGLE_HINT = 'Alt+Q or Alt+Shift+[';
   const RIGHT_CLICK_LIST_KEY = 'userscript-utils:right-click-list';
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
@@ -210,6 +211,26 @@
         font-size: 12px;
         color: #9a9a9a;
       }
+      #${COPY_TOAST_ID} {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0.98);
+        background: rgba(16, 16, 16, 0.97);
+        color: #f3f3f3;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        padding: 12px 18px;
+        border-radius: 0;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+        z-index: 2147483647;
+        pointer-events: none;
+        opacity: 0;
+        animation: utils-copy-toast 520ms ease-out;
+      }
       .utils-rc-flash {
         outline: 3px solid rgba(255, 255, 255, 0.98) !important;
         outline-offset: 2px;
@@ -242,6 +263,12 @@
           outline-color: rgba(255, 255, 255, 0);
           box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
         }
+      }
+      @keyframes utils-copy-toast {
+        0% { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+        18% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        78% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        100% { opacity: 0; transform: translate(-50%, -50%) scale(0.98); }
       }
     `;
     document.head.appendChild(style);
@@ -468,22 +495,42 @@
 
   const copyTextToClipboard = async (text) => {
     if (!text) return;
+    const fallbackCopy = () => {
+      const temp = document.createElement('textarea');
+      temp.value = text;
+      temp.style.position = 'fixed';
+      temp.style.top = '-1000px';
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand('copy');
+      temp.remove();
+    };
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(text);
       } else {
-        const temp = document.createElement('textarea');
-        temp.value = text;
-        temp.style.position = 'fixed';
-        temp.style.top = '-1000px';
-        document.body.appendChild(temp);
-        temp.select();
-        document.execCommand('copy');
-        temp.remove();
+        fallbackCopy();
       }
     } catch (err) {
-      console.error('Clipboard copy failed:', err);
+      try {
+        fallbackCopy();
+      } catch (fallbackErr) {
+        console.error('Clipboard copy failed:', err, fallbackErr);
+      }
     }
+  };
+
+  const showCopyToast = (message) => {
+    ensureStyle();
+    const existing = document.getElementById(COPY_TOAST_ID);
+    if (existing) {
+      existing.remove();
+    }
+    const toast = document.createElement('div');
+    toast.id = COPY_TOAST_ID;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 540);
   };
 
   const parseViewsCount = (rawViews) => {
@@ -1221,6 +1268,14 @@
 
   const onKeyDown = (event) => {
     if (event.repeat) return;
+    const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
+    if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'y') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      copyTextToClipboard(window.location.href || '');
+      showCopyToast('Copied URL!');
+      return;
+    }
     if (menuEl && menuEl.isConnected) {
       if (shouldIgnoreKeyEvent(event)) return;
       if (event.key === '1') {

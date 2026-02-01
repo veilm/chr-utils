@@ -7,6 +7,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 ## Features
 
 - Alt+Q menu with a right-click logger (disabled, copy+log, save-to-list)
+- Alt+Y copies the current page URL with a brief overlay confirmation
 - Right-click list stored in local storage with copy/clear helpers
 - Optional Vimium-lite navigation:
   - j/k smooth scrolling with numeric speed prefixes (e.g., 3j, 10k)

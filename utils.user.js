@@ -6,7 +6,10 @@
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @connect      127.0.0.1
 // ==/UserScript==
 
 (() => {
@@ -15,6 +18,9 @@
   const MENU_ID = 'userscript-utils-menu';
   const STYLE_ID = 'userscript-utils-style';
   const COPY_TOAST_ID = 'userscript-utils-copy-toast';
+  const COMMAND_SERVER_URL = 'http://127.0.0.1:61483/run';
+  const TOKEN_VALUE_KEY = 'chr-utils-token';
+  const CLIPBOARD_CMD = 'clip -o';
   const TOGGLE_HINT = 'Alt+Q or Alt+Shift+[';
   const RIGHT_CLICK_LIST_KEY = 'userscript-utils:right-click-list';
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
@@ -531,6 +537,87 @@
     toast.textContent = message;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 540);
+  };
+
+  const getAuthToken = () => {
+    try {
+      if (typeof GM_getValue === 'function') {
+        return GM_getValue(TOKEN_VALUE_KEY, '');
+      }
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to read token via GM_getValue:', err);
+    }
+    return '';
+  };
+
+  const runLocalCommand = (cmd, timeoutMs) => new Promise((resolve, reject) => {
+    if (typeof GM_xmlhttpRequest !== 'function') {
+      reject(new Error('GM_xmlhttpRequest not available'));
+      return;
+    }
+    const token = getAuthToken();
+    if (!token) {
+      reject(new Error('Missing auth token'));
+      return;
+    }
+    const payload = { cmd };
+    if (Number.isFinite(timeoutMs)) {
+      payload.timeout = Math.max(0, timeoutMs / 1000);
+    }
+    GM_xmlhttpRequest({
+      method: 'POST',
+      url: COMMAND_SERVER_URL,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CHR-Token': token
+      },
+      data: JSON.stringify(payload),
+      onload: (response) => {
+        try {
+          const parsed = JSON.parse(response.responseText || '{}');
+          if (!parsed.ok) {
+            const message = parsed.error || `Command failed (status ${response.status})`;
+            reject(new Error(message));
+            return;
+          }
+          resolve(parsed);
+        } catch (err) {
+          reject(err);
+        }
+      },
+      onerror: () => {
+        reject(new Error('Request failed'));
+      },
+      ontimeout: () => {
+        reject(new Error('Request timed out'));
+      }
+    });
+  });
+
+  const openClipboardUrl = async (openInNewTab) => {
+    try {
+      const result = await runLocalCommand(CLIPBOARD_CMD, 1500);
+      const raw = typeof result.stdout === 'string' ? result.stdout.trim() : '';
+      if (!raw) {
+        showCopyToast('Clipboard empty.');
+        return;
+      }
+      let url = raw;
+      try {
+        url = new URL(raw).toString();
+      } catch (err) {
+        showCopyToast('Clipboard is not a URL.');
+        return;
+      }
+      if (openInNewTab) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } else {
+        window.location.href = url;
+      }
+    } catch (err) {
+      showCopyToast('Clipboard fetch failed.');
+      console.warn('[userscript-utils] Clipboard fetch failed:', err);
+    }
   };
 
   const parseViewsCount = (rawViews) => {
@@ -1269,6 +1356,12 @@
   const onKeyDown = (event) => {
     if (event.repeat) return;
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
+    if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'p') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      openClipboardUrl(Boolean(event.shiftKey));
+      return;
+    }
     if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'y') {
       event.preventDefault();
       event.stopImmediatePropagation();

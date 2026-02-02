@@ -7,6 +7,8 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 ## Features
 
 - Alt+Q menu with a right-click logger (disabled, copy+log, save-to-list)
+- Alt+P replaces the current tab with the clipboard URL (via local server)
+- Alt+Shift+P opens the clipboard URL in a new tab (via local server)
 - Alt+Y copies the current page URL with a brief overlay confirmation
 - Right-click list stored in local storage with copy/clear helpers
 - Optional Vimium-lite navigation:
@@ -21,3 +23,8 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - utils.user.js: main userscript
 - install.sh: install helper
 - wrapper.js: wrapper script
+- server.py: local FastAPI helper (required for clipboard URL open)
+
+## Local server
+
+- Run `./server.py` to start the JS-shell bridge.

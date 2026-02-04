@@ -24,19 +24,24 @@
   const TOGGLE_HINT = 'Alt+Q or Alt+Shift+[';
   const RIGHT_CLICK_LIST_KEY = 'userscript-utils:right-click-list';
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
+  const RIGHT_CLICK_PRIORITY_KEY = 'userscript-utils:right-click-priority';
   const RIGHT_CLICK_MODE_DISABLED = 'disabled';
   const RIGHT_CLICK_MODE_COPY = 'copy';
   const RIGHT_CLICK_MODE_LIST = 'list';
+  const RIGHT_CLICK_PRIORITY_LINK = 'link';
+  const RIGHT_CLICK_PRIORITY_IMAGE = 'image';
   const SCROLL_SPEED = 900;
   const SCROLL_JUMP_PADDING = 12;
 
   let menuEl = null;
   let rightClickModeButtons = null;
+  let rightClickPriorityButtons = null;
   let rightClickListEl = null;
   let rightClickListCountEl = null;
   let rightClickCopyBtn = null;
   let rightClickClearBtn = null;
   let rightClickMode = RIGHT_CLICK_MODE_COPY;
+  let rightClickPriority = RIGHT_CLICK_PRIORITY_LINK;
   let rightClickListenerAttached = false;
   let rightClickList = [];
   let menuOpenedOnce = false;
@@ -303,11 +308,30 @@
     }
   };
 
+  const loadRightClickPriority = () => {
+    try {
+      const raw = window.localStorage.getItem(RIGHT_CLICK_PRIORITY_KEY);
+      if (!raw) return RIGHT_CLICK_PRIORITY_LINK;
+      return raw === RIGHT_CLICK_PRIORITY_IMAGE ? RIGHT_CLICK_PRIORITY_IMAGE : RIGHT_CLICK_PRIORITY_LINK;
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load right-click priority:', err);
+      return RIGHT_CLICK_PRIORITY_LINK;
+    }
+  };
+
   const saveVimiumLiteEnabled = () => {
     try {
       window.localStorage.setItem(VIMIUM_LITE_KEY, vimiumLiteEnabled ? 'true' : 'false');
     } catch (err) {
       console.warn('[userscript-utils] Failed to save vimium-lite setting:', err);
+    }
+  };
+
+  const saveRightClickPriority = () => {
+    try {
+      window.localStorage.setItem(RIGHT_CLICK_PRIORITY_KEY, rightClickPriority);
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save right-click priority:', err);
     }
   };
 
@@ -321,6 +345,7 @@
 
   rightClickList = loadRightClickList();
   vimiumLiteEnabled = loadVimiumLiteEnabled();
+  rightClickPriority = loadRightClickPriority();
 
   const updateRightClickListUI = () => {
     if (!rightClickListEl || !rightClickListCountEl) return;
@@ -339,6 +364,14 @@
     vimiumLiteButton.textContent = vimiumLiteEnabled ? 'Vimium Lite: On' : 'Vimium Lite: Off';
     vimiumLiteButton.classList.toggle('active', vimiumLiteEnabled);
     vimiumLiteButton.classList.toggle('secondary', !vimiumLiteEnabled);
+  };
+
+  const updateRightClickPriorityButtons = () => {
+    if (!rightClickPriorityButtons) return;
+    rightClickPriorityButtons.forEach((btn, mode) => {
+      btn.classList.toggle('active', mode === rightClickPriority);
+      btn.classList.toggle('secondary', mode !== rightClickPriority);
+    });
   };
 
   const buildMenu = () => {
@@ -400,6 +433,28 @@
       makeModeButton('Save to List', RIGHT_CLICK_MODE_LIST)
     );
 
+    const rightClickPriorityRow = document.createElement('div');
+    rightClickPriorityRow.className = 'utils-btn-row';
+    rightClickPriorityRow.style.marginTop = '6px';
+    rightClickPriorityButtons = new Map();
+    const makePriorityButton = (label, mode) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'utils-btn secondary';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        rightClickPriority = mode;
+        saveRightClickPriority();
+        updateRightClickPriorityButtons();
+      });
+      rightClickPriorityButtons.set(mode, btn);
+      return btn;
+    };
+    rightClickPriorityRow.append(
+      makePriorityButton('Prefer Links', RIGHT_CLICK_PRIORITY_LINK),
+      makePriorityButton('Prefer Images', RIGHT_CLICK_PRIORITY_IMAGE)
+    );
+
     const rightClickListHeader = document.createElement('div');
     rightClickListHeader.className = 'utils-btn-row';
     rightClickListCountEl = document.createElement('div');
@@ -427,7 +482,14 @@
     rightClickListEl.className = 'utils-list';
     const rightClickDesc = document.createElement('p');
     rightClickDesc.textContent = 'Prevents the context menu and targets images/links based on the selected mode. Saved list persists via local storage.';
-    rightClickSection.append(rightClickTitle, rightClickControls, rightClickDesc, rightClickListHeader, rightClickListEl);
+    rightClickSection.append(
+      rightClickTitle,
+      rightClickControls,
+      rightClickPriorityRow,
+      rightClickDesc,
+      rightClickListHeader,
+      rightClickListEl
+    );
 
     const navSection = document.createElement('div');
     navSection.className = 'utils-section';
@@ -470,6 +532,7 @@
     panel.append(header, auditSection, rightClickSection, navSection, ytSection, footer);
     menuEl = panel;
     updateRightClickModeButtons();
+    updateRightClickPriorityButtons();
     updateRightClickListUI();
     return panel;
   };
@@ -780,25 +843,39 @@
   };
 
   const collectYoutubeVideos = () => {
-    const candidates = Array.from(document.querySelectorAll('ytd-rich-grid-media, ytd-grid-video-renderer'));
+    const candidates = Array.from(document.querySelectorAll(
+      'ytd-rich-grid-media, ytd-grid-video-renderer, ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2'
+    ));
     const results = [];
+    const seen = new Set();
     for (const item of candidates) {
-      const titleEl = item.querySelector('#video-title');
+      const titleEl = item.querySelector('#video-title') ||
+        item.querySelector('.shortsLockupViewModelHostOutsideMetadataEndpoint');
       const meta = item.querySelectorAll('#metadata-line span');
-      const linkEl = item.querySelector('a#thumbnail') || item.querySelector('a#video-title');
+      const linkEl = item.querySelector('a#thumbnail') ||
+        item.querySelector('a#video-title') ||
+        item.querySelector('a.reel-item-endpoint') ||
+        item.querySelector('a.shortsLockupViewModelHostEndpoint');
+      const viewsEl = item.querySelector('.shortsLockupViewModelHostOutsideMetadataSubhead') ||
+        item.querySelector('.shortsLockupViewModelHostMetadataSubhead');
       const durationEl = item.querySelector('ytd-thumbnail-overlay-time-status-renderer span') ||
         item.querySelector('ytd-thumbnail-overlay-time-status-renderer #text');
       const rawHref = linkEl ? linkEl.getAttribute('href') : '';
       const id = extractYoutubeId(rawHref || '');
       const url = normalizeYoutubeUrl(rawHref || '', id);
       const name = titleEl ? titleEl.textContent.trim() : '';
-      const views = meta[0] ? meta[0].textContent.trim() : '';
+      const views = meta[0]
+        ? meta[0].textContent.trim()
+        : (viewsEl ? viewsEl.textContent.trim() : '');
       const time = meta[1] ? meta[1].textContent.trim() : '';
       const duration = durationEl ? durationEl.textContent.trim() : '';
       const viewsCount = parseViewsCount(views);
       const ageSeconds = parseAgeSeconds(time);
       const durationSeconds = parseDurationSeconds(duration);
       if (!name && !views && !time && !url) continue;
+      const dedupeKey = id || url || `${name}|${views}|${time}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
       results.push({
         name,
         views,
@@ -1168,42 +1245,37 @@
       return;
     }
 
-    if (target.tagName === 'IMG') {
-      const src = target.src;
-      if (!src) {
-        return;
-      }
-      pulseAt(event.clientX, event.clientY);
-      flashElement(target);
-      if (rightClickMode === RIGHT_CLICK_MODE_COPY) {
-        console.log('%c[Image Found]', 'color: #9ae6b4; font-weight: bold;', src);
-        await copyTextToClipboard(src);
-        console.log('%cCopied to clipboard!', 'color: #a3e635;');
-      } else if (rightClickMode === RIGHT_CLICK_MODE_LIST) {
-        rightClickList.push(src);
-        saveRightClickList();
-        updateRightClickListUI();
-      }
-      return;
-    }
+    const imageEl = target.tagName === 'IMG' ? target : null;
+    const imageSrc = imageEl ? imageEl.src : '';
+    const linkEl = target.closest && target.closest('a');
+    const linkHref = linkEl ? linkEl.href : '';
 
-    const link = target.closest && target.closest('a');
-    if (link) {
-      const href = link.href;
-      if (!href) {
-        return;
-      }
+    const handleTarget = async ({ kind, url, element }) => {
+      if (!url || !element) return false;
       pulseAt(event.clientX, event.clientY);
-      flashElement(link);
+      flashElement(element);
       if (rightClickMode === RIGHT_CLICK_MODE_COPY) {
-        console.log('%c[Link Found]', 'color: #facc15; font-weight: bold;', href);
-        await copyTextToClipboard(href);
+        if (kind === 'image') {
+          console.log('%c[Image Found]', 'color: #9ae6b4; font-weight: bold;', url);
+        } else {
+          console.log('%c[Link Found]', 'color: #facc15; font-weight: bold;', url);
+        }
+        await copyTextToClipboard(url);
         console.log('%cCopied to clipboard!', 'color: #a3e635;');
       } else if (rightClickMode === RIGHT_CLICK_MODE_LIST) {
-        rightClickList.push(href);
+        rightClickList.push(url);
         saveRightClickList();
         updateRightClickListUI();
       }
+      return true;
+    };
+
+    if (rightClickPriority === RIGHT_CLICK_PRIORITY_LINK) {
+      if (await handleTarget({ kind: 'link', url: linkHref, element: linkEl })) return;
+      if (await handleTarget({ kind: 'image', url: imageSrc, element: imageEl })) return;
+    } else {
+      if (await handleTarget({ kind: 'image', url: imageSrc, element: imageEl })) return;
+      if (await handleTarget({ kind: 'link', url: linkHref, element: linkEl })) return;
     }
   };
 
@@ -1960,10 +2032,8 @@
         line-height: 1;
       }
       .${HIGHLIGHT_CLASS} {
-        outline: 2px solid rgba(200, 200, 200, 0.9) !important;
-        outline-offset: 2px;
-        box-shadow: 0 0 0 2px rgba(200, 200, 200, 0.35);
-        transition: outline-color 120ms ease, box-shadow 120ms ease;
+        outline: none !important;
+        box-shadow: none;
       }
       .${SELECTED_CLASS} {
         outline: 3px solid rgba(255, 255, 255, 0.95) !important;
@@ -1971,11 +2041,11 @@
       }
       .${FRAME_OVERLAY_CLASS} {
         position: absolute;
-        border: 2px solid rgba(200, 200, 200, 0.9);
+        border: 2px solid transparent;
         border-radius: 0;
         pointer-events: none;
         z-index: 2147483646;
-        box-shadow: 0 0 0 2px rgba(200, 200, 200, 0.35);
+        box-shadow: none;
         transition: border-color 120ms ease, box-shadow 120ms ease;
       }
       .${FRAME_OVERLAY_CLASS}.selected {

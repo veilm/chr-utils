@@ -6,7 +6,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 
 ## Features
 
-- Alt+Q menu with a right-click logger (disabled, copy+log, save-to-list)
+- Alt+Q menu with a right-click logger (disabled, copy+log, save-to-list) plus link/image priority toggle
 - Alt+P replaces the current tab with the clipboard URL (via local server)
 - Alt+Shift+P opens the clipboard URL in a new tab (via local server)
 - Alt+Y copies the current page URL with a brief overlay confirmation

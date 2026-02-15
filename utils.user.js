@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/sucralose__ | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.1.0
+// @version      0.1.2
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -14,6 +14,121 @@
 
 (() => {
   'use strict';
+
+  // Instagram sometimes draws a transparent overlay above <video> that eats hover/click,
+  // making the native controls appear but not be interactive. This fix runs only on
+  // instagram.com and periodically disables pointer-events on elements stacked above
+  // visible videos near the controls area.
+  const maybeInstallInstagramVideoFix = () => {
+    let isInstagram = false;
+    try {
+      const host = window.location && window.location.hostname ? String(window.location.hostname) : '';
+      isInstagram = host === 'instagram.com' || host.endsWith('.instagram.com');
+    } catch {}
+    if (!isInstagram) return;
+
+    const FLAG = '__chr_utils_instagram_video_fix_installed__';
+    if (window[FLAG]) return;
+    window[FLAG] = true;
+
+    const IG_STYLE_ID = 'chr-utils-instagram-video-controls-style';
+    const ensureIgStyle = () => {
+      if (document.getElementById(IG_STYLE_ID)) return;
+      const style = document.createElement('style');
+      style.id = IG_STYLE_ID;
+      style.textContent = `
+video::-webkit-media-controls,
+video::-webkit-media-controls-enclosure {
+  pointer-events: auto !important;
+  cursor: auto !important;
+}
+video::-webkit-media-controls-panel,
+video::-webkit-media-controls-overlay-enclosure {
+  pointer-events: auto !important;
+}
+`;
+      (document.head || document.documentElement).appendChild(style);
+    };
+
+    const isOnScreen = (el) => {
+      if (!el || el.nodeType !== 1) return false;
+      const rect = el.getBoundingClientRect();
+      if (!rect || rect.width <= 1 || rect.height <= 1) return false;
+      if (rect.bottom <= 0 || rect.right <= 0) return false;
+      if (rect.top >= window.innerHeight || rect.left >= window.innerWidth) return false;
+      const cs = window.getComputedStyle(el);
+      if (!cs) return true;
+      if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+      if (Number(cs.opacity) === 0) return false;
+      return true;
+    };
+
+    const unblockOverlaysForVideo = (videoEl) => {
+      if (!videoEl || !videoEl.getBoundingClientRect) return;
+      const rect = videoEl.getBoundingClientRect();
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+      const mkPts = () => {
+        const yBottom = clamp(rect.bottom - 8, rect.top + 1, rect.bottom - 1);
+        const yPanel = clamp(rect.bottom - 28, rect.top + 1, rect.bottom - 1);
+        const xs = [
+          clamp(rect.left + 12, rect.left + 1, rect.right - 1),
+          clamp(rect.left + rect.width * 0.5, rect.left + 1, rect.right - 1),
+          clamp(rect.right - 12, rect.left + 1, rect.right - 1),
+        ];
+        return [...xs.map((x) => [x, yBottom]), ...xs.map((x) => [x, yPanel])];
+      };
+
+      const blockers = new Set();
+      for (const [x, y] of mkPts()) {
+        let stack = [];
+        try {
+          stack = document.elementsFromPoint(x, y) || [];
+        } catch {}
+        for (const node of stack) {
+          if (node === videoEl) break;
+          if (!node || node === document.documentElement || node === document.body) continue;
+          // Avoid disabling pointer-events on video ancestors; it can break unrelated UI.
+          if (node.contains && node.contains(videoEl)) continue;
+          blockers.add(node);
+        }
+      }
+
+      for (const node of blockers) {
+        try {
+          const cs = window.getComputedStyle(node);
+          if (cs && cs.pointerEvents === 'none') continue;
+          if (!node.dataset) continue;
+          if (node.dataset.chrUtilsIgUnblocked === '1') continue;
+          node.dataset.chrUtilsIgUnblocked = '1';
+          node.dataset.chrUtilsIgPrevPointerEvents = node.style.pointerEvents || '';
+          node.style.pointerEvents = 'none';
+        } catch {}
+      }
+    };
+
+    const tick = () => {
+      ensureIgStyle();
+      let videos = [];
+      try {
+        videos = Array.from(document.querySelectorAll('video'));
+      } catch {
+        videos = [];
+      }
+      for (const v of videos) {
+        if (!isOnScreen(v)) continue;
+        try {
+          v.controls = true;
+          v.setAttribute('controls', '');
+          v.style.pointerEvents = 'auto';
+        } catch {}
+        unblockOverlaysForVideo(v);
+      }
+    };
+
+    // Keep re-applying: Instagram is a SPA and frequently re-renders overlays/videos.
+    tick();
+    window.setInterval(tick, 500);
+  };
 
   const MENU_ID = 'userscript-utils-menu';
   const STYLE_ID = 'userscript-utils-style';
@@ -30,6 +145,7 @@
   const RIGHT_CLICK_MODE_LIST = 'list';
   const RIGHT_CLICK_PRIORITY_LINK = 'link';
   const RIGHT_CLICK_PRIORITY_IMAGE = 'image';
+  const ENABLE_INSTAGRAM_VIDEO_FIX = false;
   const SCROLL_SPEED = 900;
   const SCROLL_JUMP_PADDING = 12;
 
@@ -49,6 +165,7 @@
   let vimiumLiteButton = null;
   let ytVideoLastResults = [];
   let ytVideoOverlayState = null;
+  let linkMonitorOverlayState = null;
   let scrollDirection = 0;
   let scrollMultiplier = 1;
   let scrollRafId = null;
@@ -64,6 +181,10 @@
   let scrollTargetIsWindow = true;
   const scrollBehaviorOverrides = new Map();
   let lastPointerTarget = null;
+
+  if (ENABLE_INSTAGRAM_VIDEO_FIX) {
+    maybeInstallInstagramVideoFix();
+  }
 
   const shouldIgnoreKeyEvent = (event) => {
     if (!event) return false;
@@ -525,11 +646,24 @@
     ytDesc.textContent = 'Scan loaded YouTube cards, filter by views/time, and copy JSON/URLs.';
     ytSection.append(ytTitle, ytBtn, ytDesc);
 
+    const linkMonitorSection = document.createElement('div');
+    linkMonitorSection.className = 'utils-section';
+    const linkMonitorTitle = document.createElement('h3');
+    linkMonitorTitle.textContent = 'Link Monitor';
+    const linkMonitorBtn = document.createElement('button');
+    linkMonitorBtn.type = 'button';
+    linkMonitorBtn.className = 'utils-btn';
+    linkMonitorBtn.textContent = 'Open link monitor panel';
+    linkMonitorBtn.addEventListener('click', () => openLinkMonitorPanel());
+    const linkMonitorDesc = document.createElement('p');
+    linkMonitorDesc.textContent = 'Scan page links every 50ms with one or more regex patterns and collect deduped matches.';
+    linkMonitorSection.append(linkMonitorTitle, linkMonitorBtn, linkMonitorDesc);
+
     const footer = document.createElement('div');
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, auditSection, rightClickSection, navSection, ytSection, footer);
+    panel.append(header, auditSection, rightClickSection, navSection, ytSection, linkMonitorSection, footer);
     menuEl = panel;
     updateRightClickModeButtons();
     updateRightClickPriorityButtons();
@@ -951,6 +1085,302 @@
       : 'No videos match the current filters.';
     copyFilteredJsonBtn.disabled = sorted.length === 0;
     copyFilteredUrlsBtn.disabled = sorted.length === 0;
+  };
+
+  const closeLinkMonitorPanel = () => {
+    if (!linkMonitorOverlayState) return;
+    const { intervalId, overlay, style, mutationObserver } = linkMonitorOverlayState;
+    if (intervalId !== null) {
+      window.clearInterval(intervalId);
+    }
+    if (mutationObserver) {
+      mutationObserver.disconnect();
+    }
+    if (overlay && overlay.isConnected) {
+      overlay.remove();
+    }
+    if (style && style.isConnected) {
+      style.remove();
+    }
+    linkMonitorOverlayState = null;
+  };
+
+  const openLinkMonitorPanel = () => {
+    const OVERLAY_ID = 'link-monitor-overlay';
+    const STYLE_ID = 'link-monitor-style';
+    closeLinkMonitorPanel();
+
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      #${OVERLAY_ID} {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        width: min(540px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        background: rgba(12, 12, 12, 0.96);
+        color: #f3f3f3;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 13px;
+        line-height: 1.4;
+        border-radius: 0;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        z-index: 2147483647;
+        padding: 12px 14px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-sizing: border-box;
+      }
+      #${OVERLAY_ID} .link-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      #${OVERLAY_ID} .link-panel-title {
+        font-size: 16px;
+        font-weight: 600;
+      }
+      #${OVERLAY_ID} .link-panel-close {
+        border: none;
+        background: transparent;
+        color: #f87171;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+      }
+      #${OVERLAY_ID} .link-panel-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      #${OVERLAY_ID} .link-panel-input {
+        flex: 1;
+        min-width: 170px;
+        background: rgba(20, 20, 20, 0.9);
+        color: #f3f3f3;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 6px 8px;
+        font-size: 12px;
+      }
+      #${OVERLAY_ID} .link-panel-list {
+        margin-top: 8px;
+        padding: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(10, 10, 10, 0.7);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+        max-height: 280px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #${OVERLAY_ID} .link-panel-muted {
+        color: #b8b8b8;
+        font-size: 12px;
+      }
+      #${OVERLAY_ID} .utils-btn {
+        cursor: pointer;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 0;
+        padding: 4px 8px;
+        font-size: 12px;
+        font-weight: 600;
+        background: #2b2b2b;
+        color: #f1f1f1;
+      }
+      #${OVERLAY_ID} .utils-btn.secondary {
+        background: #1f1f1f;
+      }
+      #${OVERLAY_ID} .utils-btn.danger {
+        background: #381212;
+        border-color: rgba(248, 113, 113, 0.4);
+      }
+      #${OVERLAY_ID} .utils-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+    `;
+    document.head.appendChild(style);
+
+    const overlay = document.createElement('div');
+    overlay.id = OVERLAY_ID;
+
+    const header = document.createElement('div');
+    header.className = 'link-panel-header';
+    const title = document.createElement('div');
+    title.className = 'link-panel-title';
+    title.textContent = 'Link Monitor';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'link-panel-close';
+    closeBtn.textContent = '\u2715';
+    closeBtn.addEventListener('click', () => closeLinkMonitorPanel());
+    header.append(title, closeBtn);
+
+    const regexRowsWrap = document.createElement('div');
+    regexRowsWrap.className = 'link-panel-row';
+    regexRowsWrap.style.flexDirection = 'column';
+    regexRowsWrap.style.alignItems = 'stretch';
+    regexRowsWrap.style.gap = '6px';
+
+    const regexRows = [];
+    const getCompiledRegexes = () => {
+      const compiled = [];
+      let invalidCount = 0;
+      for (const row of regexRows) {
+        if (!row.patternInput.isConnected) continue;
+        const pattern = row.patternInput.value.trim();
+        const flags = row.flagsInput.value.trim();
+        if (!pattern) continue;
+        try {
+          compiled.push(new RegExp(pattern, flags));
+          row.patternInput.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+          row.flagsInput.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+        } catch (err) {
+          invalidCount += 1;
+          row.patternInput.style.borderColor = 'rgba(248, 113, 113, 0.85)';
+          row.flagsInput.style.borderColor = 'rgba(248, 113, 113, 0.85)';
+        }
+      }
+      return { compiled, invalidCount };
+    };
+
+    const addRegexRow = (initialPattern = '', initialFlags = '') => {
+      const row = document.createElement('div');
+      row.className = 'link-panel-row';
+      row.style.marginBottom = '0';
+      const patternInput = document.createElement('input');
+      patternInput.type = 'text';
+      patternInput.className = 'link-panel-input';
+      patternInput.placeholder = 'Regex pattern (required)';
+      patternInput.value = initialPattern;
+      const flagsInput = document.createElement('input');
+      flagsInput.type = 'text';
+      flagsInput.className = 'link-panel-input';
+      flagsInput.placeholder = 'Flags (optional, e.g. i)';
+      flagsInput.style.flex = '0 0 110px';
+      flagsInput.value = initialFlags;
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'utils-btn danger';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', () => {
+        row.remove();
+      });
+      row.append(patternInput, flagsInput, removeBtn);
+      regexRowsWrap.appendChild(row);
+      regexRows.push({ row, patternInput, flagsInput });
+    };
+
+    addRegexRow('example\\.com', 'i');
+
+    const controlsRow = document.createElement('div');
+    controlsRow.className = 'link-panel-row';
+    const statusEl = document.createElement('div');
+    statusEl.style.flex = '1';
+    statusEl.textContent = 'Scanning...';
+    const addRegexBtn = document.createElement('button');
+    addRegexBtn.type = 'button';
+    addRegexBtn.className = 'utils-btn secondary';
+    addRegexBtn.textContent = 'Add regex';
+    addRegexBtn.addEventListener('click', () => addRegexRow());
+    controlsRow.append(statusEl, addRegexBtn);
+
+    const actionRow = document.createElement('div');
+    actionRow.className = 'link-panel-row';
+    const countEl = document.createElement('div');
+    countEl.style.flex = '1';
+    countEl.textContent = '0 matched links';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'utils-btn secondary';
+    copyBtn.textContent = 'Copy list';
+    copyBtn.disabled = true;
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'utils-btn secondary';
+    clearBtn.textContent = 'Clear list';
+    clearBtn.disabled = true;
+    actionRow.append(countEl, copyBtn, clearBtn);
+
+    const hint = document.createElement('div');
+    hint.className = 'link-panel-muted';
+    hint.textContent = 'Checks all <a href> every 50ms while this panel is open. Matches are deduped by href.';
+
+    const listEl = document.createElement('div');
+    listEl.className = 'link-panel-list';
+    listEl.textContent = 'No matched links yet.';
+
+    overlay.append(header, regexRowsWrap, controlsRow, actionRow, hint, listEl);
+    document.body.appendChild(overlay);
+
+    const matches = [];
+    const matchSet = new Set();
+    const renderMatches = () => {
+      countEl.textContent = `${matches.length} matched link${matches.length === 1 ? '' : 's'}`;
+      listEl.textContent = matches.length ? matches.join('\n') : 'No matched links yet.';
+      copyBtn.disabled = matches.length === 0;
+      clearBtn.disabled = matches.length === 0;
+    };
+
+    copyBtn.addEventListener('click', () => {
+      if (!matches.length) return;
+      copyTextToClipboard(matches.join('\n'));
+      showCopyToast('Copied matched links!');
+    });
+    clearBtn.addEventListener('click', () => {
+      matches.length = 0;
+      matchSet.clear();
+      renderMatches();
+    });
+
+    const runScan = () => {
+      const { compiled, invalidCount } = getCompiledRegexes();
+      if (!compiled.length) {
+        statusEl.textContent = invalidCount ? `No active regex (${invalidCount} invalid)` : 'No active regex';
+        return;
+      }
+      statusEl.textContent = invalidCount
+        ? `Scanning (${compiled.length} active, ${invalidCount} invalid)`
+        : `Scanning (${compiled.length} active)`;
+      const anchors = document.querySelectorAll('a[href]');
+      for (const anchor of anchors) {
+        const href = anchor.href || anchor.getAttribute('href') || '';
+        if (!href || matchSet.has(href)) continue;
+        if (compiled.some((regex) => {
+          regex.lastIndex = 0;
+          return regex.test(href);
+        })) {
+          matchSet.add(href);
+          matches.push(href);
+        }
+      }
+      renderMatches();
+    };
+
+    const intervalId = window.setInterval(runScan, 50);
+    runScan();
+
+    let mutationObserver = null;
+    if (typeof MutationObserver === 'function') {
+      mutationObserver = new MutationObserver(() => {
+        if (!overlay.isConnected) {
+          closeLinkMonitorPanel();
+        }
+      });
+      mutationObserver.observe(document.body, { childList: true });
+    }
+
+    linkMonitorOverlayState = {
+      overlay,
+      style,
+      intervalId,
+      mutationObserver
+    };
   };
 
   const openYoutubeVideoPanel = () => {

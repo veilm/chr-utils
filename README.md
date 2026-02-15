@@ -11,12 +11,14 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - Alt+Shift+P opens the clipboard URL in a new tab (via local server)
 - Alt+Y copies the current page URL with a brief overlay confirmation
 - Right-click list stored in local storage with copy/clear helpers
+- Instagram: periodically unblocks overlays above visible `<video>` elements so native controls remain clickable
 - Optional Vimium-lite navigation:
   - j/k smooth scrolling with numeric speed prefixes (e.g., 3j, 10k)
   - gg to jump to top, Shift+G to jump to bottom
   - g then j/k for bottom/top
 - Image host audit overlay (highlights images, iframes, and links)
 - YouTube video scan panel with filters (title, views, timestamp, URLs, normalized counts)
+- Link monitor popup panel (50ms `<a href>` scan, multiple regex filters, deduped match list, copy/clear actions)
 
 ## Files
 

@@ -140,6 +140,7 @@ video::-webkit-media-controls-overlay-enclosure {
   const RIGHT_CLICK_LIST_KEY = 'userscript-utils:right-click-list';
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
   const RIGHT_CLICK_PRIORITY_KEY = 'userscript-utils:right-click-priority';
+  const LINK_MONITOR_REGEX_KEY = 'userscript-utils:link-monitor-regex-rows';
   const RIGHT_CLICK_MODE_DISABLED = 'disabled';
   const RIGHT_CLICK_MODE_COPY = 'copy';
   const RIGHT_CLICK_MODE_LIST = 'list';
@@ -464,6 +465,35 @@ video::-webkit-media-controls-overlay-enclosure {
     }
   };
 
+  const loadLinkMonitorRegexRows = () => {
+    try {
+      const raw = window.localStorage.getItem(LINK_MONITOR_REGEX_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const rows = [];
+      for (const item of parsed) {
+        if (!item || typeof item !== 'object') continue;
+        const pattern = typeof item.pattern === 'string' ? item.pattern.trim() : '';
+        const flags = typeof item.flags === 'string' ? item.flags.trim() : '';
+        if (!pattern) continue;
+        rows.push({ pattern, flags });
+      }
+      return rows;
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load link monitor regex rows:', err);
+      return [];
+    }
+  };
+
+  const saveLinkMonitorRegexRows = (rows) => {
+    try {
+      window.localStorage.setItem(LINK_MONITOR_REGEX_KEY, JSON.stringify(rows));
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save link monitor regex rows:', err);
+    }
+  };
+
   rightClickList = loadRightClickList();
   vimiumLiteEnabled = loadVimiumLiteEnabled();
   rightClickPriority = loadRightClickPriority();
@@ -485,6 +515,21 @@ video::-webkit-media-controls-overlay-enclosure {
     vimiumLiteButton.textContent = vimiumLiteEnabled ? 'Vimium Lite: On' : 'Vimium Lite: Off';
     vimiumLiteButton.classList.toggle('active', vimiumLiteEnabled);
     vimiumLiteButton.classList.toggle('secondary', !vimiumLiteEnabled);
+  };
+
+  const toggleVimiumLite = ({ persist = true, feedback = false } = {}) => {
+    vimiumLiteEnabled = !vimiumLiteEnabled;
+    if (!vimiumLiteEnabled) {
+      stopScroll();
+      restoreScrollBehaviorOverrides();
+    }
+    if (persist) {
+      saveVimiumLiteEnabled();
+    }
+    updateVimiumLiteButton();
+    if (feedback) {
+      showCopyToast(vimiumLiteEnabled ? 'Vimium Lite: enabled (this page)' : 'Vimium Lite: disabled (this page)');
+    }
   };
 
   const updateRightClickPriorityButtons = () => {
@@ -620,17 +665,11 @@ video::-webkit-media-controls-overlay-enclosure {
     vimiumLiteButton.type = 'button';
     vimiumLiteButton.className = 'utils-btn';
     vimiumLiteButton.addEventListener('click', () => {
-      vimiumLiteEnabled = !vimiumLiteEnabled;
-      if (!vimiumLiteEnabled) {
-        stopScroll();
-        restoreScrollBehaviorOverrides();
-      }
-      saveVimiumLiteEnabled();
-      updateVimiumLiteButton();
+      toggleVimiumLite({ persist: true, feedback: false });
     });
     updateVimiumLiteButton();
     const navDesc = document.createElement('p');
-    navDesc.textContent = 'J/K scroll, G/big G jump, and numeric prefixes for speed.';
+    navDesc.textContent = 'J/K scroll, G/big G jump, and numeric prefixes for speed. Ctrl+Alt+I toggles Vimium Lite on this page.';
     navSection.append(navTitle, vimiumLiteButton, navDesc);
 
     const ytSection = document.createElement('div');
@@ -1108,6 +1147,9 @@ video::-webkit-media-controls-overlay-enclosure {
   const openLinkMonitorPanel = () => {
     const OVERLAY_ID = 'link-monitor-overlay';
     const STYLE_ID = 'link-monitor-style';
+    if (linkMonitorOverlayState && linkMonitorOverlayState.overlay && linkMonitorOverlayState.overlay.isConnected) {
+      return;
+    }
     closeLinkMonitorPanel();
 
     const style = document.createElement('style');
@@ -1228,6 +1270,17 @@ video::-webkit-media-controls-overlay-enclosure {
     regexRowsWrap.style.gap = '6px';
 
     const regexRows = [];
+    const persistRegexRows = () => {
+      const rowsToSave = [];
+      for (const row of regexRows) {
+        if (!row.patternInput.isConnected) continue;
+        const pattern = row.patternInput.value.trim();
+        const flags = row.flagsInput.value.trim();
+        if (!pattern) continue;
+        rowsToSave.push({ pattern, flags });
+      }
+      saveLinkMonitorRegexRows(rowsToSave);
+    };
     const getCompiledRegexes = () => {
       const compiled = [];
       let invalidCount = 0;
@@ -1249,7 +1302,7 @@ video::-webkit-media-controls-overlay-enclosure {
       return { compiled, invalidCount };
     };
 
-    const addRegexRow = (initialPattern = '', initialFlags = '') => {
+    const addRegexRow = (initialPattern = '', initialFlags = '', shouldPersist = true) => {
       const row = document.createElement('div');
       row.className = 'link-panel-row';
       row.style.marginBottom = '0';
@@ -1270,13 +1323,27 @@ video::-webkit-media-controls-overlay-enclosure {
       removeBtn.textContent = 'Remove';
       removeBtn.addEventListener('click', () => {
         row.remove();
+        persistRegexRows();
       });
+      patternInput.addEventListener('input', persistRegexRows);
+      flagsInput.addEventListener('input', persistRegexRows);
       row.append(patternInput, flagsInput, removeBtn);
       regexRowsWrap.appendChild(row);
       regexRows.push({ row, patternInput, flagsInput });
+      if (shouldPersist) {
+        persistRegexRows();
+      }
     };
 
-    addRegexRow('example\\.com', 'i');
+    const storedRegexRows = loadLinkMonitorRegexRows();
+    if (storedRegexRows.length) {
+      for (const { pattern, flags } of storedRegexRows) {
+        addRegexRow(pattern, flags, false);
+      }
+    } else {
+      addRegexRow('example\\.com', 'i', false);
+    }
+    persistRegexRows();
 
     const controlsRow = document.createElement('div');
     controlsRow.className = 'link-panel-row';
@@ -1858,6 +1925,13 @@ video::-webkit-media-controls-overlay-enclosure {
   const onKeyDown = (event) => {
     if (event.repeat) return;
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
+    if (event.ctrlKey && event.altKey && !event.metaKey && lowerKey === 'i') {
+      if (shouldIgnoreKeyEvent(event)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      toggleVimiumLite({ persist: false, feedback: true });
+      return;
+    }
     if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'p') {
       event.preventDefault();
       event.stopImmediatePropagation();

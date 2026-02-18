@@ -616,6 +616,93 @@ video::-webkit-media-controls-overlay-enclosure {
     updateXSettingsInputs();
   };
 
+  const draggablePanelStateByNode = new WeakMap();
+  const enableDraggablePanel = (panel, handle, { minMargin = 8 } = {}) => {
+    if (!panel || !handle) return () => {};
+    const existingState = draggablePanelStateByNode.get(panel);
+    if (existingState && typeof existingState.detach === 'function') {
+      existingState.detach();
+    }
+
+    const state = {
+      isDragging: false,
+      pointerId: null,
+      startX: 0,
+      startY: 0,
+      startLeft: 0,
+      startTop: 0,
+      detach: null
+    };
+
+    const stopDragging = () => {
+      if (!state.isDragging) return;
+      state.isDragging = false;
+      if (state.pointerId !== null) {
+        handle.releasePointerCapture && handle.releasePointerCapture(state.pointerId);
+        state.pointerId = null;
+      }
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', stopDragging);
+      window.removeEventListener('pointercancel', stopDragging);
+    };
+
+    const onPointerMove = (event) => {
+      if (!state.isDragging || (state.pointerId !== null && event.pointerId !== state.pointerId)) {
+        return;
+      }
+      const dx = event.clientX - state.startX;
+      const dy = event.clientY - state.startY;
+      const maxLeft = Math.max(minMargin, window.innerWidth - panel.offsetWidth - minMargin);
+      const maxTop = Math.max(minMargin, window.innerHeight - panel.offsetHeight - minMargin);
+      const nextLeft = Math.min(maxLeft, Math.max(minMargin, state.startLeft + dx));
+      const nextTop = Math.min(maxTop, Math.max(minMargin, state.startTop + dy));
+      panel.style.left = `${nextLeft}px`;
+      panel.style.top = `${nextTop}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      event.preventDefault();
+    };
+
+    const onPointerDown = (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
+      if (event.target && event.target.closest('button, input, textarea, select, a, label, [role="button"]')) {
+        return;
+      }
+      state.isDragging = true;
+      state.pointerId = typeof event.pointerId === 'number' ? event.pointerId : null;
+      const rect = panel.getBoundingClientRect();
+      state.startLeft = rect.left;
+      state.startTop = rect.top;
+      state.startX = event.clientX;
+      state.startY = event.clientY;
+      panel.style.left = `${state.startLeft}px`;
+      panel.style.top = `${state.startTop}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      if (state.pointerId !== null) {
+        handle.setPointerCapture && handle.setPointerCapture(state.pointerId);
+      }
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', stopDragging);
+      window.addEventListener('pointercancel', stopDragging);
+      event.preventDefault();
+    };
+
+    handle.style.cursor = 'grab';
+    handle.style.touchAction = 'none';
+    handle.addEventListener('pointerdown', onPointerDown);
+
+    const detach = () => {
+      handle.removeEventListener('pointerdown', onPointerDown);
+      stopDragging();
+      draggablePanelStateByNode.delete(panel);
+    };
+
+    state.detach = detach;
+    draggablePanelStateByNode.set(panel, state);
+    return detach;
+  };
+
   rightClickList = loadRightClickList();
   vimiumLiteEnabled = loadVimiumLiteEnabled();
   rightClickPriority = loadRightClickPriority();
@@ -835,6 +922,7 @@ video::-webkit-media-controls-overlay-enclosure {
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
     panel.append(header, rightClickSection, navSection, auditSection, xSection, ytSection, linkMonitorSection, footer);
+    enableDraggablePanel(panel, header);
     menuEl = panel;
     updateRightClickModeButtons();
     updateRightClickPriorityButtons();
@@ -1260,7 +1348,10 @@ video::-webkit-media-controls-overlay-enclosure {
 
   const closeXSettingsPanel = () => {
     if (!xSettingsOverlayState) return;
-    const { overlay, style } = xSettingsOverlayState;
+    const { overlay, style, detachDrag } = xSettingsOverlayState;
+    if (typeof detachDrag === 'function') {
+      detachDrag();
+    }
     if (overlay && overlay.isConnected) {
       overlay.remove();
     }
@@ -1388,14 +1479,18 @@ video::-webkit-media-controls-overlay-enclosure {
       status
     );
     document.body.appendChild(overlay);
+    const detachDrag = enableDraggablePanel(overlay, header);
 
-    xSettingsOverlayState = { overlay, style };
+    xSettingsOverlayState = { overlay, style, detachDrag };
     updateXSettingsInputs();
   };
 
   const closeLinkMonitorPanel = () => {
     if (!linkMonitorOverlayState) return;
-    const { intervalId, overlay, style, mutationObserver } = linkMonitorOverlayState;
+    const { intervalId, overlay, style, mutationObserver, detachDrag } = linkMonitorOverlayState;
+    if (typeof detachDrag === 'function') {
+      detachDrag();
+    }
     if (intervalId !== null) {
       window.clearInterval(intervalId);
     }
@@ -1651,6 +1746,7 @@ video::-webkit-media-controls-overlay-enclosure {
 
     overlay.append(header, regexRowsWrap, controlsRow, actionRow, hint, listEl);
     document.body.appendChild(overlay);
+    const detachDrag = enableDraggablePanel(overlay, header);
 
     const matches = [];
     const matchSet = new Set();
@@ -1713,21 +1809,30 @@ video::-webkit-media-controls-overlay-enclosure {
       overlay,
       style,
       intervalId,
-      mutationObserver
+      mutationObserver,
+      detachDrag
     };
+  };
+
+  const closeYoutubeVideoPanel = () => {
+    if (!ytVideoOverlayState) return;
+    const { overlay, style, detachDrag } = ytVideoOverlayState;
+    if (typeof detachDrag === 'function') {
+      detachDrag();
+    }
+    if (overlay && overlay.isConnected) {
+      overlay.remove();
+    }
+    if (style && style.isConnected) {
+      style.remove();
+    }
+    ytVideoOverlayState = null;
   };
 
   const openYoutubeVideoPanel = () => {
     const OVERLAY_ID = 'yt-video-audit-overlay';
     const STYLE_ID = 'yt-video-audit-style';
-    const existing = document.getElementById(OVERLAY_ID);
-    if (existing) {
-      existing.remove();
-    }
-    const existingStyle = document.getElementById(STYLE_ID);
-    if (existingStyle) {
-      existingStyle.remove();
-    }
+    closeYoutubeVideoPanel();
 
     const style = document.createElement('style');
     style.id = STYLE_ID;
@@ -1839,7 +1944,7 @@ video::-webkit-media-controls-overlay-enclosure {
     closeBtn.type = 'button';
     closeBtn.className = 'yt-panel-close';
     closeBtn.textContent = '\u2715';
-    closeBtn.addEventListener('click', () => overlay.remove());
+    closeBtn.addEventListener('click', () => closeYoutubeVideoPanel());
     header.append(title, closeBtn);
 
     const scanRow = document.createElement('div');
@@ -1946,8 +2051,12 @@ video::-webkit-media-controls-overlay-enclosure {
 
     overlay.append(header, scanRow, filterRow, hint, actions, listEl);
     document.body.appendChild(overlay);
+    const detachDrag = enableDraggablePanel(overlay, header);
 
     ytVideoOverlayState = {
+      overlay,
+      style,
+      detachDrag,
       viewsInput,
       timeInput,
       durationInput,
@@ -2596,76 +2705,6 @@ video::-webkit-media-controls-overlay-enclosure {
     const anchorHostMap = buildHostMap(anchorEntries, 'anchorHostKey', 'href');
     const allEntries = [...imageEntries, ...frameEntries, ...anchorEntries];
 
-    const makeOverlayDraggable = (node, handle) => {
-      const minMargin = 8;
-      let isDragging = false;
-      let pointerId = null;
-      let startX = 0;
-      let startY = 0;
-      let startLeft = 0;
-      let startTop = 0;
-
-      const stopDragging = () => {
-        if (!isDragging) {
-          return;
-        }
-        isDragging = false;
-        if (pointerId !== null) {
-          handle.releasePointerCapture && handle.releasePointerCapture(pointerId);
-          pointerId = null;
-        }
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', stopDragging);
-        window.removeEventListener('pointercancel', stopDragging);
-      };
-
-      const onPointerMove = (event) => {
-        if (!isDragging || (pointerId !== null && event.pointerId !== pointerId)) {
-          return;
-        }
-        const dx = event.clientX - startX;
-        const dy = event.clientY - startY;
-        const maxLeft = Math.max(minMargin, window.innerWidth - node.offsetWidth - minMargin);
-        const maxTop = Math.max(minMargin, window.innerHeight - node.offsetHeight - minMargin);
-        const nextLeft = Math.min(maxLeft, Math.max(minMargin, startLeft + dx));
-        const nextTop = Math.min(maxTop, Math.max(minMargin, startTop + dy));
-        node.style.left = `${nextLeft}px`;
-        node.style.top = `${nextTop}px`;
-        node.style.right = 'auto';
-        event.preventDefault();
-      };
-
-      const onPointerDown = (event) => {
-        if (event.button !== undefined && event.button !== 0) {
-          return;
-        }
-        isDragging = true;
-        pointerId = typeof event.pointerId === 'number' ? event.pointerId : null;
-        const rect = node.getBoundingClientRect();
-        startLeft = rect.left;
-        startTop = rect.top;
-        startX = event.clientX;
-        startY = event.clientY;
-        node.style.left = `${startLeft}px`;
-        node.style.top = `${startTop}px`;
-        node.style.right = 'auto';
-        if (pointerId !== null) {
-          handle.setPointerCapture && handle.setPointerCapture(pointerId);
-        }
-        window.addEventListener('pointermove', onPointerMove);
-        window.addEventListener('pointerup', stopDragging);
-        window.addEventListener('pointercancel', stopDragging);
-        event.preventDefault();
-      };
-
-      handle.addEventListener('pointerdown', onPointerDown);
-
-      return () => {
-        handle.removeEventListener('pointerdown', onPointerDown);
-        stopDragging();
-      };
-    };
-
     let frameOverlayRaf = null;
     const queueFrameOverlayUpdate = () => {
       if (frameOverlayRaf) {
@@ -2958,7 +2997,7 @@ video::-webkit-media-controls-overlay-enclosure {
       overlay.append(pageLinkSectionTitle, pageLinkList);
     }
     document.body.appendChild(overlay);
-    const detachDrag = makeOverlayDraggable(overlay, dragHandle);
+    const detachDrag = enableDraggablePanel(overlay, dragHandle);
 
     let lastHighlightedEntries = [];
     const hostHighlightControls = [];

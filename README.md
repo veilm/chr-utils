@@ -16,6 +16,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
   - j/k smooth scrolling with numeric speed prefixes (e.g., 3j, 10k)
   - gg to jump to top, Shift+G to jump to bottom
   - g then j/k for bottom/top
+- X settings panel (persistent): hide selected left-nav entries, hide right sidebar, and hide Grok action buttons on posts
 - Image host audit overlay (highlights images, iframes, and links)
 - YouTube video scan panel with filters (title, views, timestamp, URLs, normalized counts)
 - Link monitor popup panel (50ms `<a href>` scan, multiple regex filters, deduped match list, copy/clear actions)

@@ -141,11 +141,22 @@ video::-webkit-media-controls-overlay-enclosure {
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
   const RIGHT_CLICK_PRIORITY_KEY = 'userscript-utils:right-click-priority';
   const LINK_MONITOR_REGEX_KEY = 'userscript-utils:link-monitor-regex-rows';
+  const X_SETTINGS_KEY = 'userscript-utils:x-settings';
+  const X_STYLE_ID = 'userscript-utils-x-style';
   const RIGHT_CLICK_MODE_DISABLED = 'disabled';
   const RIGHT_CLICK_MODE_COPY = 'copy';
   const RIGHT_CLICK_MODE_LIST = 'list';
   const RIGHT_CLICK_PRIORITY_LINK = 'link';
   const RIGHT_CLICK_PRIORITY_IMAGE = 'image';
+  const DEFAULT_X_SETTINGS = Object.freeze({
+    hideFollow: true,
+    hidePremium: true,
+    hideArticles: true,
+    hideProfile: true,
+    hideGrokNav: true,
+    hideRightSidebar: true,
+    hidePostGrokButtons: true
+  });
   const ENABLE_INSTAGRAM_VIDEO_FIX = false;
   const SCROLL_SPEED = 900;
   const SCROLL_JUMP_PADDING = 12;
@@ -166,6 +177,7 @@ video::-webkit-media-controls-overlay-enclosure {
   let vimiumLiteButton = null;
   let ytVideoLastResults = [];
   let ytVideoOverlayState = null;
+  let xSettingsOverlayState = null;
   let linkMonitorOverlayState = null;
   let scrollDirection = 0;
   let scrollMultiplier = 1;
@@ -175,6 +187,8 @@ video::-webkit-media-controls-overlay-enclosure {
   let numericPrefixTimer = null;
   let gPending = false;
   let gPendingTimer = null;
+  let xSettings = { ...DEFAULT_X_SETTINGS };
+  let xSettingsInputs = null;
   let navJDown = false;
   let navKDown = false;
   let lastNavKey = null;
@@ -255,6 +269,8 @@ video::-webkit-media-controls-overlay-enclosure {
         top: 18px;
         right: 18px;
         width: min(360px, calc(100vw - 36px));
+        max-height: calc(100vh - 36px);
+        overflow: auto;
         background: rgba(16, 16, 16, 0.97);
         color: #f1f1f1;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -494,9 +510,116 @@ video::-webkit-media-controls-overlay-enclosure {
     }
   };
 
+  const isXHost = () => {
+    try {
+      const host = window.location && window.location.hostname ? String(window.location.hostname) : '';
+      return host === 'x.com' || host.endsWith('.x.com') || host === 'twitter.com' || host.endsWith('.twitter.com');
+    } catch {
+      return false;
+    }
+  };
+
+  const loadXSettings = () => {
+    const settings = { ...DEFAULT_X_SETTINGS };
+    try {
+      const raw = window.localStorage.getItem(X_SETTINGS_KEY);
+      if (!raw) return settings;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return settings;
+      for (const key of Object.keys(DEFAULT_X_SETTINGS)) {
+        if (typeof parsed[key] === 'boolean') {
+          settings[key] = parsed[key];
+        }
+      }
+      return settings;
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load X settings:', err);
+      return settings;
+    }
+  };
+
+  const saveXSettings = () => {
+    try {
+      window.localStorage.setItem(X_SETTINGS_KEY, JSON.stringify(xSettings));
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save X settings:', err);
+    }
+  };
+
+  const applyXSettings = () => {
+    const existing = document.getElementById(X_STYLE_ID);
+    if (!isXHost()) {
+      if (existing) {
+        existing.remove();
+      }
+      return;
+    }
+    const rules = [];
+    if (xSettings.hideFollow) {
+      rules.push(
+        'nav[aria-label="Primary"] a[data-testid="AppTabBar_Follow_Link"], nav[aria-label="Primary"] a[href="/i/connect_people"] { display: none !important; }'
+      );
+    }
+    if (xSettings.hidePremium) {
+      rules.push(
+        'nav[aria-label="Primary"] a[data-testid="premium-hub-tab"], nav[aria-label="Primary"] a[href="/i/premium"] { display: none !important; }'
+      );
+    }
+    if (xSettings.hideArticles) {
+      rules.push('nav[aria-label="Primary"] a[href="/compose/articles"] { display: none !important; }');
+    }
+    if (xSettings.hideProfile) {
+      rules.push(
+        'nav[aria-label="Primary"] a[data-testid="AppTabBar_Profile_Link"], nav[aria-label="Primary"] a[href^="/"][aria-label="Profile"] { display: none !important; }'
+      );
+    }
+    if (xSettings.hideGrokNav) {
+      rules.push(
+        'nav[aria-label="Primary"] a[href="/i/grok"], nav[aria-label="Primary"] a[aria-label="Grok"] { display: none !important; }'
+      );
+    }
+    if (xSettings.hideRightSidebar) {
+      rules.push('[data-testid="sidebarColumn"] { display: none !important; }');
+    }
+    if (xSettings.hidePostGrokButtons) {
+      rules.push('article button[aria-label="Grok actions"], article [role="button"][aria-label="Grok actions"] { display: none !important; }');
+    }
+
+    const cssText = rules.join('\n');
+    if (!cssText) {
+      if (existing) {
+        existing.remove();
+      }
+      return;
+    }
+    const style = existing || document.createElement('style');
+    style.id = X_STYLE_ID;
+    style.textContent = cssText;
+    if (!style.isConnected) {
+      (document.head || document.documentElement).appendChild(style);
+    }
+  };
+
+  const updateXSettingsInputs = () => {
+    if (!xSettingsInputs) return;
+    xSettingsInputs.forEach((input, key) => {
+      if (!input) return;
+      input.checked = Boolean(xSettings[key]);
+    });
+  };
+
+  const setXSetting = (key, checked) => {
+    if (!(key in DEFAULT_X_SETTINGS)) return;
+    xSettings[key] = Boolean(checked);
+    saveXSettings();
+    applyXSettings();
+    updateXSettingsInputs();
+  };
+
   rightClickList = loadRightClickList();
   vimiumLiteEnabled = loadVimiumLiteEnabled();
   rightClickPriority = loadRightClickPriority();
+  xSettings = loadXSettings();
 
   const updateRightClickListUI = () => {
     if (!rightClickListEl || !rightClickListCountEl) return;
@@ -569,11 +692,9 @@ video::-webkit-media-controls-overlay-enclosure {
     const auditBtn = document.createElement('button');
     auditBtn.type = 'button';
     auditBtn.className = 'utils-btn';
-    auditBtn.textContent = 'Run audit overlay';
+    auditBtn.textContent = 'Open image host audit';
     auditBtn.addEventListener('click', () => runImageHostAudit());
-    const auditDesc = document.createElement('p');
-    auditDesc.textContent = 'Highlights images, iframes, and page links with a draggable report panel.';
-    auditSection.append(auditTitle, auditBtn, auditDesc);
+    auditSection.append(auditTitle, auditBtn);
 
     const rightClickSection = document.createElement('div');
     rightClickSection.className = 'utils-section';
@@ -672,6 +793,17 @@ video::-webkit-media-controls-overlay-enclosure {
     navDesc.textContent = 'J/K scroll, G/big G jump, and numeric prefixes for speed. Ctrl+Alt+I toggles Vimium Lite on this page.';
     navSection.append(navTitle, vimiumLiteButton, navDesc);
 
+    const xSection = document.createElement('div');
+    xSection.className = 'utils-section';
+    const xTitle = document.createElement('h3');
+    xTitle.textContent = 'X Settings';
+    const xBtn = document.createElement('button');
+    xBtn.type = 'button';
+    xBtn.className = 'utils-btn';
+    xBtn.textContent = 'Open X settings panel';
+    xBtn.addEventListener('click', () => openXSettingsPanel());
+    xSection.append(xTitle, xBtn);
+
     const ytSection = document.createElement('div');
     ytSection.className = 'utils-section';
     const ytTitle = document.createElement('h3');
@@ -702,7 +834,7 @@ video::-webkit-media-controls-overlay-enclosure {
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, auditSection, rightClickSection, navSection, ytSection, linkMonitorSection, footer);
+    panel.append(header, rightClickSection, navSection, auditSection, xSection, ytSection, linkMonitorSection, footer);
     menuEl = panel;
     updateRightClickModeButtons();
     updateRightClickPriorityButtons();
@@ -1124,6 +1256,141 @@ video::-webkit-media-controls-overlay-enclosure {
       : 'No videos match the current filters.';
     copyFilteredJsonBtn.disabled = sorted.length === 0;
     copyFilteredUrlsBtn.disabled = sorted.length === 0;
+  };
+
+  const closeXSettingsPanel = () => {
+    if (!xSettingsOverlayState) return;
+    const { overlay, style } = xSettingsOverlayState;
+    if (overlay && overlay.isConnected) {
+      overlay.remove();
+    }
+    if (style && style.isConnected) {
+      style.remove();
+    }
+    xSettingsOverlayState = null;
+    xSettingsInputs = null;
+  };
+
+  const openXSettingsPanel = () => {
+    const OVERLAY_ID = 'x-settings-overlay';
+    const STYLE_ID = 'x-settings-style';
+    if (xSettingsOverlayState && xSettingsOverlayState.overlay && xSettingsOverlayState.overlay.isConnected) {
+      return;
+    }
+    closeXSettingsPanel();
+
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      #${OVERLAY_ID} {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        width: min(520px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        background: rgba(12, 12, 12, 0.96);
+        color: #f3f3f3;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 13px;
+        line-height: 1.4;
+        border-radius: 0;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        z-index: 2147483647;
+        padding: 12px 14px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-sizing: border-box;
+      }
+      #${OVERLAY_ID} .x-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      #${OVERLAY_ID} .x-panel-title {
+        font-size: 16px;
+        font-weight: 600;
+      }
+      #${OVERLAY_ID} .x-panel-close {
+        border: none;
+        background: transparent;
+        color: #f87171;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+      }
+      #${OVERLAY_ID} .x-panel-check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 8px 0;
+        color: #d8d8d8;
+      }
+      #${OVERLAY_ID} .x-panel-check input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
+        accent-color: #d4d4d4;
+      }
+      #${OVERLAY_ID} .x-panel-muted {
+        margin-top: 10px;
+        color: #b8b8b8;
+        font-size: 12px;
+      }
+    `;
+    document.head.appendChild(style);
+
+    const overlay = document.createElement('div');
+    overlay.id = OVERLAY_ID;
+
+    const header = document.createElement('div');
+    header.className = 'x-panel-header';
+    const title = document.createElement('div');
+    title.className = 'x-panel-title';
+    title.textContent = 'X Settings';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'x-panel-close';
+    closeBtn.textContent = '\u2715';
+    closeBtn.addEventListener('click', () => closeXSettingsPanel());
+    header.append(title, closeBtn);
+
+    xSettingsInputs = new Map();
+    const makeXSettingToggle = (key, label) => {
+      const row = document.createElement('label');
+      row.className = 'x-panel-check';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = Boolean(xSettings[key]);
+      input.addEventListener('change', () => setXSetting(key, input.checked));
+      xSettingsInputs.set(key, input);
+      const text = document.createElement('span');
+      text.textContent = label;
+      row.append(input, text);
+      return row;
+    };
+
+    const status = document.createElement('div');
+    status.className = 'x-panel-muted';
+    status.textContent = isXHost()
+      ? 'Settings are active on this page and persist via local storage.'
+      : 'Open x.com to see these settings take effect. Preferences are persisted via local storage.';
+
+    overlay.append(
+      header,
+      makeXSettingToggle('hideFollow', 'Disable Follow (left nav)'),
+      makeXSettingToggle('hidePremium', 'Disable Premium (left nav)'),
+      makeXSettingToggle('hideArticles', 'Disable Articles (left nav)'),
+      makeXSettingToggle('hideProfile', 'Disable Profile (left nav)'),
+      makeXSettingToggle('hideGrokNav', 'Disable Grok (left nav)'),
+      makeXSettingToggle('hideRightSidebar', 'Hide right sidebar'),
+      makeXSettingToggle('hidePostGrokButtons', 'Hide Grok buttons on posts'),
+      status
+    );
+    document.body.appendChild(overlay);
+
+    xSettingsOverlayState = { overlay, style };
+    updateXSettingsInputs();
   };
 
   const closeLinkMonitorPanel = () => {
@@ -2073,6 +2340,7 @@ video::-webkit-media-controls-overlay-enclosure {
   };
 
   setRightClickMode(RIGHT_CLICK_MODE_COPY);
+  applyXSettings();
   document.addEventListener('keydown', onKeyDown, true);
   document.addEventListener('keydown', onKeyDownNav, true);
   document.addEventListener('keyup', onKeyUpNav, true);

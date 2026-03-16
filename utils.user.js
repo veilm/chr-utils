@@ -160,6 +160,7 @@ video::-webkit-media-controls-overlay-enclosure {
   const ENABLE_INSTAGRAM_VIDEO_FIX = false;
   const SCROLL_SPEED = 900;
   const SCROLL_JUMP_PADDING = 12;
+  const LINK_HINT_ALPHABET = 'asdfghjklqwertyuiopzxcvbnm';
 
   let menuEl = null;
   let rightClickModeButtons = null;
@@ -194,6 +195,7 @@ video::-webkit-media-controls-overlay-enclosure {
   let lastNavKey = null;
   let scrollTargetEl = null;
   let scrollTargetIsWindow = true;
+  let linkHintState = null;
   const scrollBehaviorOverrides = new Map();
   let lastPointerTarget = null;
 
@@ -397,6 +399,54 @@ video::-webkit-media-controls-overlay-enclosure {
         animation: utils-rc-pulse 520ms ease-out;
         pointer-events: none;
         z-index: 2147483647;
+      }
+      .utils-link-hints {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 2147483646;
+      }
+      .utils-link-hint {
+        position: fixed;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 4px;
+        background: #ffe66d;
+        color: #111;
+        border: 1px solid rgba(0, 0, 0, 0.9);
+        box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .utils-link-hint.matching {
+        background: #ffd43b;
+      }
+      .utils-link-hint.exact {
+        background: #ff9f1c;
+      }
+      .utils-link-hint-status {
+        position: fixed;
+        left: 50%;
+        bottom: 18px;
+        transform: translateX(-50%);
+        max-width: calc(100vw - 40px);
+        background: rgba(16, 16, 16, 0.97);
+        color: #f3f3f3;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+        padding: 8px 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+        font-size: 12px;
+        line-height: 1.3;
+        white-space: nowrap;
       }
       @keyframes utils-rc-pulse {
         0% { opacity: 0.95; transform: translate(-50%, -50%) scale(0.3); }
@@ -993,6 +1043,240 @@ video::-webkit-media-controls-overlay-enclosure {
     toast.textContent = message;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 540);
+  };
+
+  const isVisibleHintTarget = (el) => {
+    if (!el || !el.isConnected) return false;
+    if (el.disabled) return false;
+    const style = window.getComputedStyle(el);
+    if (!style) return false;
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    if (Number.parseFloat(style.opacity || '1') <= 0.01) return false;
+    const rect = el.getBoundingClientRect();
+    if (!rect || rect.width < 4 || rect.height < 4) return false;
+    if (rect.bottom < 0 || rect.right < 0) return false;
+    if (rect.top > window.innerHeight || rect.left > window.innerWidth) return false;
+    return true;
+  };
+
+  const getLinkHintRect = (el) => {
+    const rects = Array.from(el.getClientRects ? el.getClientRects() : []);
+    for (const rect of rects) {
+      if (!rect || rect.width < 1 || rect.height < 1) continue;
+      if (rect.bottom < 0 || rect.right < 0) continue;
+      if (rect.top > window.innerHeight || rect.left > window.innerWidth) continue;
+      return rect;
+    }
+    return el.getBoundingClientRect();
+  };
+
+  const getLinkHintElements = () => {
+    const selectors = [
+      'a[href]',
+      'button',
+      'input[type="button"]',
+      'input[type="submit"]',
+      'input[type="checkbox"]',
+      'input[type="radio"]',
+      'summary',
+      '[role="button"]',
+      '[onclick]'
+    ];
+    const seen = new Set();
+    const elements = [];
+    const nodes = document.querySelectorAll(selectors.join(','));
+    for (const node of nodes) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (seen.has(node)) continue;
+      if (!isVisibleHintTarget(node)) continue;
+      seen.add(node);
+      elements.push(node);
+    }
+    return elements;
+  };
+
+  const encodeHintLabel = (index) => {
+    const alphabet = LINK_HINT_ALPHABET;
+    const base = alphabet.length;
+    let value = index;
+    let label = '';
+    do {
+      label = alphabet[value % base] + label;
+      value = Math.floor(value / base) - 1;
+    } while (value >= 0);
+    return label;
+  };
+
+  const activateLinkHintTarget = (item, openInNewTab) => {
+    if (!item || !item.el || !item.el.isConnected) return false;
+    const el = item.el;
+    if (openInNewTab) {
+      if (el instanceof HTMLAnchorElement && el.href) {
+        window.open(el.href, '_blank', 'noopener,noreferrer');
+        return true;
+      }
+      if (typeof el.click === 'function') {
+        const ctrlClick = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          ctrlKey: true,
+          metaKey: true
+        });
+        return el.dispatchEvent(ctrlClick);
+      }
+      return false;
+    }
+    if (typeof el.click === 'function') {
+      el.click();
+      return true;
+    }
+    return false;
+  };
+
+  const teardownLinkHints = () => {
+    if (!linkHintState) return;
+    if (linkHintState.container && linkHintState.container.isConnected) {
+      linkHintState.container.remove();
+    }
+    if (linkHintState.updatePositions) {
+      window.removeEventListener('scroll', linkHintState.updatePositions, true);
+      window.removeEventListener('resize', linkHintState.updatePositions, true);
+    }
+    linkHintState = null;
+  };
+
+  const refreshLinkHintMatches = () => {
+    if (!linkHintState) return;
+    const typed = linkHintState.typed;
+    let exactMatch = null;
+    let matchCount = 0;
+    for (const item of linkHintState.items) {
+      const matches = !typed || item.label.startsWith(typed);
+      item.hintEl.style.display = matches ? '' : 'none';
+      item.hintEl.classList.toggle('matching', Boolean(typed) && matches);
+      const exact = typed && item.label === typed;
+      item.hintEl.classList.toggle('exact', Boolean(exact));
+      if (matches) {
+        matchCount += 1;
+      }
+      if (exact) {
+        exactMatch = item;
+      }
+    }
+    const modeLabel = linkHintState.openInNewTab ? 'new-tab' : 'open';
+    linkHintState.statusEl.textContent = typed
+      ? `Hints ${modeLabel}: ${typed.toUpperCase()} (${matchCount} match${matchCount === 1 ? '' : 'es'})`
+      : `Hints ${modeLabel}: type hint keys, Esc to cancel`;
+    if (typed && exactMatch && matchCount === 1) {
+      const shouldOpenInNewTab = linkHintState.openInNewTab;
+      teardownLinkHints();
+      activateLinkHintTarget(exactMatch, shouldOpenInNewTab);
+      return;
+    }
+    if (typed && matchCount === 0) {
+      linkHintState.typed = '';
+      refreshLinkHintMatches();
+    }
+  };
+
+  const startLinkHints = (openInNewTab) => {
+    teardownLinkHints();
+    stopScroll();
+    navJDown = false;
+    navKDown = false;
+    lastNavKey = null;
+    ensureStyle();
+    const elements = getLinkHintElements();
+    if (!elements.length) {
+      showCopyToast('No visible hint targets.');
+      return;
+    }
+
+    const container = document.createElement('div');
+    container.className = 'utils-link-hints';
+    const statusEl = document.createElement('div');
+    statusEl.className = 'utils-link-hint-status';
+    container.appendChild(statusEl);
+
+    const items = elements.map((el, index) => {
+      const hintEl = document.createElement('div');
+      hintEl.className = 'utils-link-hint';
+      const label = encodeHintLabel(index);
+      hintEl.textContent = label.toUpperCase();
+      container.appendChild(hintEl);
+      return { el, hintEl, label };
+    });
+
+    const updatePositions = () => {
+      if (!linkHintState) return;
+      for (const item of linkHintState.items) {
+        if (!isVisibleHintTarget(item.el)) {
+          item.hintEl.style.display = 'none';
+          continue;
+        }
+        const rect = getLinkHintRect(item.el);
+        if (!rect || rect.width < 1 || rect.height < 1) {
+          item.hintEl.style.display = 'none';
+          continue;
+        }
+        const left = Math.max(0, rect.left);
+        const top = Math.max(0, rect.top);
+        item.hintEl.style.left = `${left}px`;
+        item.hintEl.style.top = `${top}px`;
+        if (!linkHintState.typed || item.label.startsWith(linkHintState.typed)) {
+          item.hintEl.style.display = '';
+        }
+      }
+    };
+
+    linkHintState = {
+      openInNewTab,
+      typed: '',
+      container,
+      statusEl,
+      items,
+      updatePositions
+    };
+    document.documentElement.appendChild(container);
+    window.addEventListener('scroll', updatePositions, true);
+    window.addEventListener('resize', updatePositions, true);
+    updatePositions();
+    refreshLinkHintMatches();
+  };
+
+  const handleLinkHintKeyDown = (event) => {
+    if (!linkHintState) return false;
+    if (event.altKey || event.ctrlKey || event.metaKey) return false;
+    const consume = () => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    };
+    if (event.key === 'Escape') {
+      consume();
+      teardownLinkHints();
+      return true;
+    }
+    if (event.key === 'Backspace') {
+      consume();
+      if (linkHintState.typed) {
+        linkHintState.typed = linkHintState.typed.slice(0, -1);
+        refreshLinkHintMatches();
+      } else {
+        teardownLinkHints();
+      }
+      return true;
+    }
+    const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : '';
+    if (!lowerKey || lowerKey.length !== 1 || !LINK_HINT_ALPHABET.includes(lowerKey)) {
+      consume();
+      return true;
+    }
+    consume();
+    linkHintState.typed += lowerKey;
+    refreshLinkHintMatches();
+    return true;
   };
 
   const getAuthToken = () => {
@@ -2352,6 +2636,10 @@ video::-webkit-media-controls-overlay-enclosure {
 
   const onKeyDownNav = (event) => {
     if (shouldIgnoreKeyEvent(event)) return;
+    if (linkHintState) {
+      handleLinkHintKeyDown(event);
+      return;
+    }
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (menuEl && menuEl.isConnected) return;
     if (!vimiumLiteEnabled) return;
@@ -2377,6 +2665,13 @@ video::-webkit-media-controls-overlay-enclosure {
     }
 
     const lowerKey = key && key.toLowerCase ? key.toLowerCase() : key;
+    if (lowerKey === 'f') {
+      consumeNavEvent();
+      clearNumericPrefix();
+      clearGPending();
+      startLinkHints(Boolean(event.shiftKey));
+      return;
+    }
     if (event.shiftKey && lowerKey === 'g') {
       consumeNavEvent();
       jumpToEdge(1, event);
@@ -2430,6 +2725,15 @@ video::-webkit-media-controls-overlay-enclosure {
   };
 
   const onKeyUpNav = (event) => {
+    if (linkHintState) {
+      const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
+      if (lowerKey && LINK_HINT_ALPHABET.includes(lowerKey)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+      }
+      return;
+    }
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
     if (lowerKey === 'j' || lowerKey === 'k') {
       if (lowerKey === 'j') {
@@ -2457,6 +2761,7 @@ video::-webkit-media-controls-overlay-enclosure {
     lastPointerTarget = event.target;
   }, true);
   window.addEventListener('blur', stopScroll);
+  window.addEventListener('blur', teardownLinkHints);
 
   const runImageHostAudit = () => {
     const previousAudit = window.__imageHostAudit;

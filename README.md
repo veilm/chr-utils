@@ -16,7 +16,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
   - j/k smooth scrolling with numeric speed prefixes (e.g., 3j, 10k)
   - gg to jump to top, Shift+G to jump to bottom
   - g then j/k for bottom/top
-  - f to show clickable-element hints and open the selected target
+  - f to show clickable-element hints, including editable fields; text inputs/textareas are focused for typing
   - F to show clickable-element hints and open links in a new tab
 - X settings panel (persistent): hide selected left-nav entries, hide right sidebar, and hide Grok action buttons on posts
 - Image host audit overlay (highlights images, iframes, and links)

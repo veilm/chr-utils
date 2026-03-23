@@ -1074,6 +1074,16 @@ video::-webkit-media-controls-overlay-enclosure {
     const selectors = [
       'a[href]',
       'button',
+      'textarea',
+      'select',
+      'input:not([type])',
+      'input[type="text"]',
+      'input[type="search"]',
+      'input[type="url"]',
+      'input[type="tel"]',
+      'input[type="email"]',
+      'input[type="password"]',
+      'input[type="number"]',
       'input[type="button"]',
       'input[type="submit"]',
       'input[type="checkbox"]',
@@ -1110,6 +1120,16 @@ video::-webkit-media-controls-overlay-enclosure {
   const activateLinkHintTarget = (item, openInNewTab) => {
     if (!item || !item.el || !item.el.isConnected) return false;
     const el = item.el;
+    if (!openInNewTab && (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || el instanceof HTMLInputElement)) {
+      el.focus();
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        try {
+          const valueLength = typeof el.value === 'string' ? el.value.length : 0;
+          el.setSelectionRange(valueLength, valueLength);
+        } catch {}
+      }
+      return true;
+    }
     if (openInNewTab) {
       if (el instanceof HTMLAnchorElement && el.href) {
         window.open(el.href, '_blank', 'noopener,noreferrer');

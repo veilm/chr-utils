@@ -17,6 +17,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
   - gg to jump to top, Shift+G to jump to bottom
   - g then j/k for bottom/top
   - f to show clickable-element hints, including editable fields; text inputs/textareas are focused for typing
+  - hint labels stay fixed-width per page; if any two-letter hints are needed, all hints become two letters
   - F to show clickable-element hints and open links in a new tab
 - X settings panel (persistent): hide selected left-nav entries, hide right sidebar, and hide Grok action buttons on posts
 - Image host audit overlay (highlights images, iframes, and links)

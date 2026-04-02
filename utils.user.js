@@ -1105,15 +1105,27 @@ video::-webkit-media-controls-overlay-enclosure {
     return elements;
   };
 
-  const encodeHintLabel = (index) => {
+  const getHintLabelLength = (count) => {
+    const base = LINK_HINT_ALPHABET.length;
+    let length = 1;
+    let capacity = base;
+    while (count > capacity) {
+      length += 1;
+      capacity *= base;
+    }
+    return length;
+  };
+
+  const encodeHintLabel = (index, count) => {
     const alphabet = LINK_HINT_ALPHABET;
     const base = alphabet.length;
     let value = index;
     let label = '';
-    do {
+    const length = getHintLabelLength(count);
+    for (let i = 0; i < length; i += 1) {
       label = alphabet[value % base] + label;
-      value = Math.floor(value / base) - 1;
-    } while (value >= 0);
+      value = Math.floor(value / base);
+    }
     return label;
   };
 
@@ -1222,7 +1234,7 @@ video::-webkit-media-controls-overlay-enclosure {
     const items = elements.map((el, index) => {
       const hintEl = document.createElement('div');
       hintEl.className = 'utils-link-hint';
-      const label = encodeHintLabel(index);
+      const label = encodeHintLabel(index, elements.length);
       hintEl.textContent = label.toUpperCase();
       container.appendChild(hintEl);
       return { el, hintEl, label };

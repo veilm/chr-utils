@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Chromium Utils
-// @author       https://x.com/sucralose__ | codex | claude
+// @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
 // @version      0.1.2
 // @description  Global utilities launcher (Alt+Q)

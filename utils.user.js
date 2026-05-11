@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.1.2
+// @version      0.1.3
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -143,11 +143,19 @@ video::-webkit-media-controls-overlay-enclosure {
   const LINK_MONITOR_REGEX_KEY = 'userscript-utils:link-monitor-regex-rows';
   const X_SETTINGS_KEY = 'userscript-utils:x-settings';
   const X_STYLE_ID = 'userscript-utils-x-style';
+  const DARK_MODE_STYLE_ID = 'userscript-utils-dark-mode-style';
+  const DARK_MODE_SITE_MAP_KEY = 'userscript-utils:dark-mode-site-map';
+  const DARK_MODE_LAST_MODE_KEY = 'userscript-utils:dark-mode-last-mode';
   const RIGHT_CLICK_MODE_DISABLED = 'disabled';
   const RIGHT_CLICK_MODE_COPY = 'copy';
   const RIGHT_CLICK_MODE_LIST = 'list';
   const RIGHT_CLICK_PRIORITY_LINK = 'link';
   const RIGHT_CLICK_PRIORITY_IMAGE = 'image';
+  const DARK_MODE_OFF = 'off';
+  const DARK_MODE_MIDNIGHT = 'midnight';
+  const DARK_MODE_INVERT = 'invert';
+  const DARK_MODE_AMBER = 'amber';
+  const DEFAULT_DARK_MODE = DARK_MODE_AMBER;
   const DEFAULT_X_SETTINGS = Object.freeze({
     hideFollow: true,
     hidePremium: true,
@@ -156,6 +164,124 @@ video::-webkit-media-controls-overlay-enclosure {
     hideGrokNav: true,
     hideRightSidebar: true,
     hidePostGrokButtons: true
+  });
+  const DARK_MODE_LABELS = Object.freeze({
+    [DARK_MODE_OFF]: 'Off',
+    [DARK_MODE_MIDNIGHT]: 'Midnight',
+    [DARK_MODE_INVERT]: 'Invert',
+    [DARK_MODE_AMBER]: 'Amber'
+  });
+  const DARK_MODE_CSS_BY_MODE = Object.freeze({
+    [DARK_MODE_MIDNIGHT]: `
+html {
+  background: #070b10 !important;
+}
+body {
+  background: #070b10 !important;
+  color: #e6edf7 !important;
+}
+a:link,
+a:visited {
+  color: #8dc6ff !important;
+}
+a:hover,
+a:focus {
+  color: #bedfff !important;
+}
+hr,
+table,
+thead,
+tbody,
+tfoot,
+tr,
+th,
+td,
+pre,
+code,
+blockquote,
+fieldset {
+  border-color: #2e3a47 !important;
+}
+input,
+textarea,
+select,
+button {
+  background: #0f1720 !important;
+  color: #edf4ff !important;
+  border-color: #334155 !important;
+}
+`,
+    [DARK_MODE_INVERT]: `
+html {
+  background: #ffffff !important;
+  filter: invert(1) hue-rotate(180deg) !important;
+}
+body {
+  background: #ffffff !important;
+}
+img,
+video,
+picture,
+canvas,
+svg,
+iframe,
+embed,
+object {
+  filter: invert(1) hue-rotate(180deg) !important;
+}
+#${MENU_ID},
+#${COPY_TOAST_ID},
+.utils-link-hints {
+  filter: invert(1) hue-rotate(180deg) !important;
+}
+`,
+    [DARK_MODE_AMBER]: `
+html {
+  background: #17120d !important;
+}
+body {
+  background: #17120d !important;
+  color: #f0ddba !important;
+}
+a:link,
+a:visited {
+  color: #ffcc7a !important;
+}
+a:hover,
+a:focus {
+  color: #ffe1a8 !important;
+}
+hr,
+table,
+thead,
+tbody,
+tfoot,
+tr,
+th,
+td,
+pre,
+code,
+blockquote,
+fieldset {
+  border-color: #5a4630 !important;
+}
+input,
+textarea,
+select,
+button {
+  background: #241a12 !important;
+  color: #f4e4c5 !important;
+  border-color: #6b5338 !important;
+}
+img,
+video,
+picture,
+canvas,
+svg,
+iframe {
+  filter: sepia(0.2) saturate(0.9) brightness(0.95) !important;
+}
+`
   });
   const ENABLE_INSTAGRAM_VIDEO_FIX = false;
   const SCROLL_SPEED = 900;
@@ -180,6 +306,10 @@ video::-webkit-media-controls-overlay-enclosure {
   let ytVideoOverlayState = null;
   let xSettingsOverlayState = null;
   let linkMonitorOverlayState = null;
+  let darkModeModeButtons = null;
+  let darkModeSiteMap = {};
+  let currentDarkMode = DARK_MODE_OFF;
+  let lastDarkMode = DEFAULT_DARK_MODE;
   let scrollDirection = 0;
   let scrollMultiplier = 1;
   let scrollRafId = null;
@@ -560,6 +690,136 @@ video::-webkit-media-controls-overlay-enclosure {
     }
   };
 
+  const normalizeDarkMode = (value) => {
+    if (value === DARK_MODE_MIDNIGHT || value === DARK_MODE_INVERT || value === DARK_MODE_AMBER) {
+      return value;
+    }
+    return DARK_MODE_OFF;
+  };
+
+  const getCurrentSiteKey = () => {
+    try {
+      const host = window.location && window.location.hostname ? String(window.location.hostname).trim().toLowerCase() : '';
+      return host || '';
+    } catch {
+      return '';
+    }
+  };
+
+  const loadDarkModeSiteMap = () => {
+    try {
+      const raw = window.localStorage.getItem(DARK_MODE_SITE_MAP_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return {};
+      const next = {};
+      for (const [site, mode] of Object.entries(parsed)) {
+        if (typeof site !== 'string') continue;
+        const normalizedSite = site.trim().toLowerCase();
+        const normalizedMode = normalizeDarkMode(mode);
+        if (!normalizedSite || normalizedMode === DARK_MODE_OFF) continue;
+        next[normalizedSite] = normalizedMode;
+      }
+      return next;
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load dark mode site map:', err);
+      return {};
+    }
+  };
+
+  const saveDarkModeSiteMap = () => {
+    try {
+      window.localStorage.setItem(DARK_MODE_SITE_MAP_KEY, JSON.stringify(darkModeSiteMap));
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save dark mode site map:', err);
+    }
+  };
+
+  const loadLastDarkMode = () => {
+    try {
+      const raw = window.localStorage.getItem(DARK_MODE_LAST_MODE_KEY);
+      const normalized = normalizeDarkMode(raw);
+      return normalized === DARK_MODE_OFF ? DEFAULT_DARK_MODE : normalized;
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load last dark mode:', err);
+      return DEFAULT_DARK_MODE;
+    }
+  };
+
+  const saveLastDarkMode = () => {
+    try {
+      if (currentDarkMode !== DARK_MODE_OFF) {
+        window.localStorage.setItem(DARK_MODE_LAST_MODE_KEY, currentDarkMode);
+      }
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save last dark mode:', err);
+    }
+  };
+
+  const getDarkModeCss = (mode) => DARK_MODE_CSS_BY_MODE[normalizeDarkMode(mode)] || '';
+
+  const updateDarkModeButtons = () => {
+    if (!darkModeModeButtons) return;
+    darkModeModeButtons.forEach((btn, mode) => {
+      const isActive = mode === currentDarkMode;
+      btn.classList.toggle('active', isActive);
+      btn.classList.toggle('secondary', !isActive);
+    });
+  };
+
+  const applyDarkMode = () => {
+    const cssText = getDarkModeCss(currentDarkMode);
+    const existing = document.getElementById(DARK_MODE_STYLE_ID);
+    document.documentElement.dataset.chrUtilsDarkMode = currentDarkMode;
+    if (!cssText) {
+      if (existing) {
+        existing.remove();
+      }
+      updateDarkModeButtons();
+      return;
+    }
+    const style = existing || document.createElement('style');
+    style.id = DARK_MODE_STYLE_ID;
+    style.textContent = cssText;
+    if (!style.isConnected) {
+      (document.head || document.documentElement).appendChild(style);
+    }
+    updateDarkModeButtons();
+  };
+
+  const setDarkMode = (mode, { persist = true, feedback = true } = {}) => {
+    const normalizedMode = normalizeDarkMode(mode);
+    currentDarkMode = normalizedMode;
+    if (normalizedMode !== DARK_MODE_OFF) {
+      lastDarkMode = normalizedMode;
+      saveLastDarkMode();
+    }
+    if (persist) {
+      const siteKey = getCurrentSiteKey();
+      if (siteKey) {
+        if (normalizedMode === DARK_MODE_OFF) {
+          delete darkModeSiteMap[siteKey];
+        } else {
+          darkModeSiteMap[siteKey] = normalizedMode;
+        }
+        saveDarkModeSiteMap();
+      }
+    }
+    applyDarkMode();
+    if (feedback) {
+      const label = DARK_MODE_LABELS[normalizedMode] || normalizedMode;
+      showCopyToast(normalizedMode === DARK_MODE_OFF ? 'Dark mode: off for this site' : `Dark mode: ${label}`);
+    }
+  };
+
+  const toggleDarkModeForSite = () => {
+    if (currentDarkMode === DARK_MODE_OFF) {
+      setDarkMode(lastDarkMode || DEFAULT_DARK_MODE, { persist: true, feedback: true });
+      return;
+    }
+    setDarkMode(DARK_MODE_OFF, { persist: true, feedback: true });
+  };
+
   const isXHost = () => {
     try {
       const host = window.location && window.location.hostname ? String(window.location.hostname) : '';
@@ -757,6 +1017,10 @@ video::-webkit-media-controls-overlay-enclosure {
   vimiumLiteEnabled = loadVimiumLiteEnabled();
   rightClickPriority = loadRightClickPriority();
   xSettings = loadXSettings();
+  darkModeSiteMap = loadDarkModeSiteMap();
+  lastDarkMode = loadLastDarkMode();
+  currentDarkMode = normalizeDarkMode(darkModeSiteMap[getCurrentSiteKey()]) || DARK_MODE_OFF;
+  applyDarkMode();
 
   const updateRightClickListUI = () => {
     if (!rightClickListEl || !rightClickListCountEl) return;
@@ -930,6 +1194,34 @@ video::-webkit-media-controls-overlay-enclosure {
     navDesc.textContent = 'J/K scroll, G/big G jump, and numeric prefixes for speed. Ctrl+Alt+I toggles Vimium Lite on this page.';
     navSection.append(navTitle, vimiumLiteButton, navDesc);
 
+    const darkModeSection = document.createElement('div');
+    darkModeSection.className = 'utils-section';
+    const darkModeTitle = document.createElement('h3');
+    darkModeTitle.textContent = 'Dark Mode';
+    const darkModeControls = document.createElement('div');
+    darkModeControls.className = 'utils-btn-row';
+    darkModeModeButtons = new Map();
+    const makeDarkModeButton = (mode) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'utils-btn secondary';
+      btn.textContent = DARK_MODE_LABELS[mode] || mode;
+      btn.addEventListener('click', () => {
+        setDarkMode(mode, { persist: true, feedback: true });
+      });
+      darkModeModeButtons.set(mode, btn);
+      return btn;
+    };
+    darkModeControls.append(
+      makeDarkModeButton(DARK_MODE_OFF),
+      makeDarkModeButton(DARK_MODE_MIDNIGHT),
+      makeDarkModeButton(DARK_MODE_INVERT),
+      makeDarkModeButton(DARK_MODE_AMBER)
+    );
+    const darkModeDesc = document.createElement('p');
+    darkModeDesc.textContent = 'Saved per host. Alt+Shift+A toggles this site on or off using the last selected mode.';
+    darkModeSection.append(darkModeTitle, darkModeControls, darkModeDesc);
+
     const xSection = document.createElement('div');
     xSection.className = 'utils-section';
     const xTitle = document.createElement('h3');
@@ -971,12 +1263,13 @@ video::-webkit-media-controls-overlay-enclosure {
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, rightClickSection, navSection, auditSection, xSection, ytSection, linkMonitorSection, footer);
+    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, xSection, ytSection, linkMonitorSection, footer);
     enableDraggablePanel(panel, header);
     menuEl = panel;
     updateRightClickModeButtons();
     updateRightClickPriorityButtons();
     updateRightClickListUI();
+    updateDarkModeButtons();
     return panel;
   };
 
@@ -2617,6 +2910,13 @@ video::-webkit-media-controls-overlay-enclosure {
   const onKeyDown = (event) => {
     if (event.repeat) return;
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
+    if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'a') {
+      if (shouldIgnoreKeyEvent(event)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      toggleDarkModeForSite();
+      return;
+    }
     if (event.ctrlKey && event.altKey && !event.metaKey && lowerKey === 'i') {
       if (shouldIgnoreKeyEvent(event)) return;
       event.preventDefault();

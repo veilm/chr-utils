@@ -10,6 +10,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - Alt+P replaces the current tab with the clipboard URL (via local server)
 - Alt+Shift+P opens the clipboard URL in a new tab (via local server)
 - Alt+Y copies the current page URL with a brief overlay confirmation
+- Alt+Shift+A toggles a per-site dark mode; mode selection persists by host
 - Right-click list stored in local storage with copy/clear helpers
 - Instagram: periodically unblocks overlays above visible `<video>` elements so native controls remain clickable
 - Optional Vimium-lite navigation:
@@ -20,6 +21,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
   - hint labels stay fixed-width per page; if any two-letter hints are needed, all hints become two letters
   - F to show clickable-element hints and open links in a new tab
 - X settings panel (persistent): hide selected left-nav entries, hide right sidebar, and hide Grok action buttons on posts
+- Dark mode presets: `Midnight` (direct recolor), `Invert` (full-page invert), and `Amber` (warm sepia-like recolor)
 - Image host audit overlay (highlights images, iframes, and links)
 - YouTube video scan panel with filters (title, views, timestamp, URLs, normalized counts)
 - Link monitor popup panel (50ms `<a href>` scan, multiple regex filters, deduped match list, copy/clear actions)

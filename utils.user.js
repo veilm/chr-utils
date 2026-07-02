@@ -326,6 +326,7 @@ iframe {
   let scrollTargetEl = null;
   let scrollTargetIsWindow = true;
   let linkHintState = null;
+  let commandPromptActive = false;
   const scrollBehaviorOverrides = new Map();
   let lastPointerTarget = null;
 
@@ -1336,6 +1337,42 @@ iframe {
     toast.textContent = message;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 540);
+  };
+
+  const copyAllPageLinks = async () => {
+    const links = Array.from(document.querySelectorAll('a[href]') || [])
+      .map((anchor) => anchor.href || anchor.getAttribute('href') || '')
+      .filter(Boolean);
+    await copyTextToClipboard(links.join('\n'));
+    showCopyToast(`Copied ${links.length} link${links.length === 1 ? '' : 's'}!`);
+  };
+
+  const enterCommandPrompt = () => {
+    commandPromptActive = true;
+    showCopyToast('Command: v Vimium Lite, l links');
+  };
+
+  const handleCommandPromptKeyDown = (event) => {
+    if (!commandPromptActive) return false;
+    commandPromptActive = false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
+    if (lowerKey === 'v') {
+      toggleVimiumLite({ persist: false, feedback: true });
+      return true;
+    }
+    if (lowerKey === 'l') {
+      copyAllPageLinks();
+      return true;
+    }
+    if (lowerKey === 'escape') {
+      showCopyToast('Command cancelled');
+      return true;
+    }
+    showCopyToast(`Unknown command: ${event.key || ''}`);
+    return true;
   };
 
   const isVisibleHintTarget = (el) => {
@@ -2909,7 +2946,15 @@ iframe {
 
   const onKeyDown = (event) => {
     if (event.repeat) return;
+    if (handleCommandPromptKeyDown(event)) return;
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
+    if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q') {
+      if (shouldIgnoreKeyEvent(event)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      enterCommandPrompt();
+      return;
+    }
     if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'a') {
       if (shouldIgnoreKeyEvent(event)) return;
       event.preventDefault();
@@ -2958,7 +3003,7 @@ iframe {
     if (shouldIgnoreKeyEvent(event)) return;
     if (!event.altKey) return;
     const key = event.key;
-    const isPrimary = key && key.toLowerCase && key.toLowerCase() === 'q';
+    const isPrimary = !event.shiftKey && key && key.toLowerCase && key.toLowerCase() === 'q';
     const isSecondary = event.shiftKey && (key === '{' || key === '[');
     if (!isPrimary && !isSecondary) return;
     if (shouldIgnoreKeyEvent(event)) return;

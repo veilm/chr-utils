@@ -145,6 +145,7 @@ video::-webkit-media-controls-overlay-enclosure {
   const REQUEST_MONITOR_REGEX_KEY = 'userscript-utils:request-monitor-regex-rows';
   const REQUEST_MONITOR_EVENT = 'userscript-utils:request';
   const REQUEST_MONITOR_READY_EVENT = 'userscript-utils:request-hook-ready';
+  const REQUEST_MONITOR_MEDIA_EVENT = 'userscript-utils:media-request';
   const REQUEST_MONITOR_MAX_ENTRIES = 1000;
   const X_SETTINGS_KEY = 'userscript-utils:x-settings';
   const X_STYLE_ID = 'userscript-utils-x-style';
@@ -314,6 +315,7 @@ iframe {
   let requestMonitorOverlayState = null;
   let requestMonitorHookInstalled = false;
   const requestMonitorEntries = [];
+  const requestMonitorMediaUrlsByElement = new WeakMap();
   let darkModeModeButtons = null;
   let darkModeSiteMap = {};
   let currentDarkMode = DARK_MODE_OFF;
@@ -358,6 +360,16 @@ iframe {
     }
   };
 
+  const toAbsoluteRequestUrl = (value) => {
+    const url = normalizeRequestUrl(value).trim();
+    if (!url) return '';
+    try {
+      return new URL(url, document.baseURI || window.location.href).href;
+    } catch {
+      return url;
+    }
+  };
+
   const hasRecentRequestMonitorEntry = (url, type, ts, windowMs = 2000) => {
     for (let i = requestMonitorEntries.length - 1; i >= 0; i -= 1) {
       const entry = requestMonitorEntries[i];
@@ -368,6 +380,35 @@ iframe {
     return false;
   };
 
+  const hasRecentRequestMonitorUrl = (url, ts, windowMs = 2000) => {
+    for (let i = requestMonitorEntries.length - 1; i >= 0; i -= 1) {
+      const entry = requestMonitorEntries[i];
+      if (!entry) continue;
+      if (ts - entry.ts > windowMs) return false;
+      if (entry.url === url) return true;
+    }
+    return false;
+  };
+
+  const addMediaRequestMonitorUrl = (url, { element = null, type = 'media', force = false } = {}) => {
+    const absoluteUrl = toAbsoluteRequestUrl(url);
+    if (!absoluteUrl) return;
+    if (element && !force) {
+      const seenUrls = requestMonitorMediaUrlsByElement.get(element) || new Set();
+      if (seenUrls.has(absoluteUrl)) return;
+      seenUrls.add(absoluteUrl);
+      requestMonitorMediaUrlsByElement.set(element, seenUrls);
+    }
+    const ts = Date.now();
+    if (hasRecentRequestMonitorUrl(absoluteUrl, ts, 500)) return;
+    addRequestMonitorEntry({
+      type,
+      method: 'GET',
+      url: absoluteUrl,
+      ts
+    });
+  };
+
   const addPerformanceResourceEntry = (entry) => {
     if (!entry || typeof entry.name !== 'string' || !entry.name) return;
     const initiatorType = typeof entry.initiatorType === 'string' && entry.initiatorType
@@ -375,6 +416,9 @@ iframe {
       : 'resource';
     const type = initiatorType === 'xmlhttprequest' ? 'xhr' : initiatorType;
     const ts = Math.round((performance.timeOrigin || Date.now()) + (Number(entry.startTime) || 0));
+    if (hasRecentRequestMonitorUrl(entry.name, ts, 500)) {
+      return;
+    }
     if ((type === 'fetch' || type === 'xhr') && hasRecentRequestMonitorEntry(entry.name, type, ts)) {
       return;
     }
@@ -387,6 +431,11 @@ iframe {
   };
 
   const installResourceRequestMonitorObserver = () => {
+    try {
+      if (performance.setResourceTimingBufferSize) {
+        performance.setResourceTimingBufferSize(5000);
+      }
+    } catch {}
     try {
       const existing = performance.getEntriesByType ? performance.getEntriesByType('resource') : [];
       for (const entry of existing) {
@@ -415,6 +464,86 @@ iframe {
       if (input !== undefined && input !== null) return String(input);
     } catch {}
     return '';
+  };
+
+  const recordMediaRequestElement = (element) => {
+    if (!element || element.nodeType !== 1) return;
+    const tagName = element.tagName ? element.tagName.toLowerCase() : '';
+    if (tagName === 'video' || tagName === 'audio') {
+      addMediaRequestMonitorUrl(element.currentSrc, { element, type: 'media' });
+      addMediaRequestMonitorUrl(element.src, { element, type: 'media' });
+      addMediaRequestMonitorUrl(element.getAttribute('src'), { element, type: 'media' });
+      try {
+        const sources = element.querySelectorAll ? element.querySelectorAll('source[src]') : [];
+        for (const source of sources) {
+          recordMediaRequestElement(source);
+        }
+      } catch {}
+      return;
+    }
+    if (tagName === 'source') {
+      addMediaRequestMonitorUrl(element.src, { element, type: 'media' });
+      addMediaRequestMonitorUrl(element.getAttribute('src'), { element, type: 'media' });
+    }
+  };
+
+  const scanMediaRequestElements = (root = document) => {
+    try {
+      if (root && root.nodeType === 1) {
+        recordMediaRequestElement(root);
+      }
+      if (!root || !root.querySelectorAll) return;
+      const mediaNodes = root.querySelectorAll('video,audio,source[src]');
+      for (const node of mediaNodes) {
+        recordMediaRequestElement(node);
+      }
+    } catch {}
+  };
+
+  const installMediaRequestMonitor = () => {
+    window.addEventListener(REQUEST_MONITOR_MEDIA_EVENT, (event) => {
+      const detail = event.detail || {};
+      addMediaRequestMonitorUrl(detail.url, { type: 'media', force: true });
+    }, true);
+
+    const runInitialScan = () => scanMediaRequestElements(document);
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', runInitialScan, { once: true });
+    } else {
+      runInitialScan();
+    }
+
+    const mediaEvents = ['loadstart', 'loadedmetadata', 'durationchange', 'error'];
+    for (const eventName of mediaEvents) {
+      document.addEventListener(eventName, (event) => {
+        recordMediaRequestElement(event.target);
+      }, true);
+    }
+
+    if (typeof MutationObserver === 'function') {
+      const observeRoot = document.documentElement || document;
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.type === 'attributes') {
+            recordMediaRequestElement(mutation.target);
+            continue;
+          }
+          for (const node of mutation.addedNodes || []) {
+            scanMediaRequestElements(node);
+          }
+        }
+      });
+      try {
+        observer.observe(observeRoot, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['src']
+        });
+      } catch {}
+    }
+
+    window.setInterval(() => scanMediaRequestElements(document), 500);
   };
 
   const installSandboxRequestMonitorHook = () => {
@@ -470,6 +599,7 @@ iframe {
     const source = `(() => {
       const REQUEST_EVENT = ${JSON.stringify(REQUEST_MONITOR_EVENT)};
       const READY_EVENT = ${JSON.stringify(REQUEST_MONITOR_READY_EVENT)};
+      const MEDIA_EVENT = ${JSON.stringify(REQUEST_MONITOR_MEDIA_EVENT)};
       if (window.__chrUtilsRequestMonitorPageHooked) return;
       window.__chrUtilsRequestMonitorPageHooked = true;
       const normalizeUrl = (input) => {
@@ -521,6 +651,52 @@ iframe {
           };
         }
       }
+      const emitMedia = (url) => {
+        if (!url) return;
+        try {
+          window.dispatchEvent(new CustomEvent(MEDIA_EVENT, { detail: {
+            type: 'media',
+            method: 'GET',
+            url: normalizeUrl(url),
+            ts: Date.now()
+          }}));
+        } catch {}
+      };
+      const hookSrcDescriptor = (proto) => {
+        if (!proto) return;
+        const descriptor = Object.getOwnPropertyDescriptor(proto, 'src');
+        if (!descriptor || typeof descriptor.set !== 'function' || descriptor.set.__chrUtilsRequestMonitorHooked) return;
+        const originalSet = descriptor.set;
+        const nextDescriptor = {
+          configurable: descriptor.configurable,
+          enumerable: descriptor.enumerable,
+          get: descriptor.get,
+          set: function chrUtilsMediaSrcSet(value) {
+            emitMedia(value);
+            return originalSet.call(this, value);
+          }
+        };
+        nextDescriptor.set.__chrUtilsRequestMonitorHooked = true;
+        try {
+          Object.defineProperty(proto, 'src', nextDescriptor);
+        } catch {}
+      };
+      hookSrcDescriptor(window.HTMLMediaElement && window.HTMLMediaElement.prototype);
+      hookSrcDescriptor(window.HTMLSourceElement && window.HTMLSourceElement.prototype);
+      const ElementProto = window.Element && window.Element.prototype;
+      if (ElementProto && typeof ElementProto.setAttribute === 'function' && !ElementProto.setAttribute.__chrUtilsRequestMonitorHooked) {
+        const originalSetAttribute = ElementProto.setAttribute;
+        ElementProto.setAttribute = function chrUtilsSetAttribute(name, value) {
+          try {
+            const tagName = this && this.tagName ? String(this.tagName).toLowerCase() : '';
+            if (String(name).toLowerCase() === 'src' && (tagName === 'video' || tagName === 'audio' || tagName === 'source')) {
+              emitMedia(value);
+            }
+          } catch {}
+          return originalSetAttribute.apply(this, arguments);
+        };
+        ElementProto.setAttribute.__chrUtilsRequestMonitorHooked = true;
+      }
       try {
         window.dispatchEvent(new CustomEvent(READY_EVENT));
       } catch {}
@@ -542,6 +718,7 @@ iframe {
 
   installRequestMonitorHook();
   installResourceRequestMonitorObserver();
+  installMediaRequestMonitor();
 
   if (ENABLE_INSTAGRAM_VIDEO_FIX) {
     maybeInstallInstagramVideoFix();
@@ -2980,7 +3157,7 @@ iframe {
 
     const hint = document.createElement('div');
     hint.className = 'request-panel-muted';
-    hint.textContent = `Captures fetch, XMLHttpRequest, and resource timing URLs from this page. Keeps the newest ${REQUEST_MONITOR_MAX_ENTRIES} entries.`;
+    hint.textContent = `Captures fetch, XMLHttpRequest, media element, and resource timing URLs from this page. Keeps the newest ${REQUEST_MONITOR_MAX_ENTRIES} entries.`;
 
     const listEl = document.createElement('div');
     listEl.className = 'request-panel-list';

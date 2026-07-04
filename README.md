@@ -26,7 +26,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - Image host audit overlay (highlights images, iframes, and links)
 - YouTube video scan panel with filters (title, views, timestamp, URLs, normalized counts)
 - Link monitor popup panel (50ms `<a href>` scan, multiple regex filters, deduped match list, copy/clear actions)
-- Request monitor popup panel (logs page request URLs from `fetch`, `XMLHttpRequest`, and resource timing, persistent regex filters, copy/clear actions)
+- Request monitor popup panel (logs page request URLs from `fetch`, `XMLHttpRequest`, media elements, and resource timing, persistent regex filters, copy/clear actions)
 
 ## Files
 

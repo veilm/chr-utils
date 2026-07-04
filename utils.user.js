@@ -6,6 +6,7 @@
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
+// @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -141,6 +142,10 @@ video::-webkit-media-controls-overlay-enclosure {
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
   const RIGHT_CLICK_PRIORITY_KEY = 'userscript-utils:right-click-priority';
   const LINK_MONITOR_REGEX_KEY = 'userscript-utils:link-monitor-regex-rows';
+  const REQUEST_MONITOR_REGEX_KEY = 'userscript-utils:request-monitor-regex-rows';
+  const REQUEST_MONITOR_EVENT = 'userscript-utils:request';
+  const REQUEST_MONITOR_READY_EVENT = 'userscript-utils:request-hook-ready';
+  const REQUEST_MONITOR_MAX_ENTRIES = 1000;
   const X_SETTINGS_KEY = 'userscript-utils:x-settings';
   const X_STYLE_ID = 'userscript-utils-x-style';
   const DARK_MODE_STYLE_ID = 'userscript-utils-dark-mode-style';
@@ -306,6 +311,9 @@ iframe {
   let ytVideoOverlayState = null;
   let xSettingsOverlayState = null;
   let linkMonitorOverlayState = null;
+  let requestMonitorOverlayState = null;
+  let requestMonitorHookInstalled = false;
+  const requestMonitorEntries = [];
   let darkModeModeButtons = null;
   let darkModeSiteMap = {};
   let currentDarkMode = DARK_MODE_OFF;
@@ -329,6 +337,211 @@ iframe {
   let commandPromptActive = false;
   const scrollBehaviorOverrides = new Map();
   let lastPointerTarget = null;
+
+  const addRequestMonitorEntry = (detail) => {
+    if (!detail || typeof detail !== 'object') return;
+    const url = typeof detail.url === 'string' ? detail.url : '';
+    if (!url) return;
+    const rawType = typeof detail.type === 'string' && detail.type ? detail.type.toLowerCase() : 'fetch';
+    const entry = {
+      url,
+      method: typeof detail.method === 'string' && detail.method ? detail.method.toUpperCase() : 'GET',
+      type: rawType === 'xmlhttprequest' ? 'xhr' : rawType,
+      ts: Number.isFinite(detail.ts) ? detail.ts : Date.now()
+    };
+    requestMonitorEntries.push(entry);
+    if (requestMonitorEntries.length > REQUEST_MONITOR_MAX_ENTRIES) {
+      requestMonitorEntries.splice(0, requestMonitorEntries.length - REQUEST_MONITOR_MAX_ENTRIES);
+    }
+    if (requestMonitorOverlayState && typeof requestMonitorOverlayState.render === 'function') {
+      requestMonitorOverlayState.render();
+    }
+  };
+
+  const hasRecentRequestMonitorEntry = (url, type, ts, windowMs = 2000) => {
+    for (let i = requestMonitorEntries.length - 1; i >= 0; i -= 1) {
+      const entry = requestMonitorEntries[i];
+      if (!entry) continue;
+      if (ts - entry.ts > windowMs) return false;
+      if (entry.url === url && entry.type === type) return true;
+    }
+    return false;
+  };
+
+  const addPerformanceResourceEntry = (entry) => {
+    if (!entry || typeof entry.name !== 'string' || !entry.name) return;
+    const initiatorType = typeof entry.initiatorType === 'string' && entry.initiatorType
+      ? entry.initiatorType.toLowerCase()
+      : 'resource';
+    const type = initiatorType === 'xmlhttprequest' ? 'xhr' : initiatorType;
+    const ts = Math.round((performance.timeOrigin || Date.now()) + (Number(entry.startTime) || 0));
+    if ((type === 'fetch' || type === 'xhr') && hasRecentRequestMonitorEntry(entry.name, type, ts)) {
+      return;
+    }
+    addRequestMonitorEntry({
+      type,
+      method: 'GET',
+      url: entry.name,
+      ts
+    });
+  };
+
+  const installResourceRequestMonitorObserver = () => {
+    try {
+      const existing = performance.getEntriesByType ? performance.getEntriesByType('resource') : [];
+      for (const entry of existing) {
+        addPerformanceResourceEntry(entry);
+      }
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to read existing resource timing entries:', err);
+    }
+    if (typeof PerformanceObserver !== 'function') return;
+    try {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          addPerformanceResourceEntry(entry);
+        }
+      });
+      observer.observe({ type: 'resource', buffered: true });
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to observe resource timing entries:', err);
+    }
+  };
+
+  const normalizeRequestUrl = (input) => {
+    try {
+      if (typeof input === 'string') return input;
+      if (input && typeof input.url === 'string') return input.url;
+      if (input !== undefined && input !== null) return String(input);
+    } catch {}
+    return '';
+  };
+
+  const installSandboxRequestMonitorHook = () => {
+    const targetWindow = window;
+    if (!targetWindow || targetWindow.__chrUtilsRequestMonitorSandboxHooked) return;
+    targetWindow.__chrUtilsRequestMonitorSandboxHooked = true;
+
+    const originalFetch = targetWindow.fetch;
+    if (typeof originalFetch === 'function') {
+      targetWindow.fetch = function chrUtilsFetch(input, init) {
+        const url = normalizeRequestUrl(input);
+        const method = init && init.method
+          ? String(init.method)
+          : (input && typeof input.method === 'string' ? input.method : 'GET');
+        addRequestMonitorEntry({ type: 'fetch', method, url, ts: Date.now() });
+        return originalFetch.apply(this, arguments);
+      };
+    }
+
+    const XHR = targetWindow.XMLHttpRequest;
+    if (XHR && XHR.prototype) {
+      const originalOpen = XHR.prototype.open;
+      const originalSend = XHR.prototype.send;
+      if (typeof originalOpen === 'function' && typeof originalSend === 'function') {
+        XHR.prototype.open = function chrUtilsXhrOpen(method, url) {
+          this.__chrUtilsRequestInfo = {
+            method: method ? String(method) : 'GET',
+            url: normalizeRequestUrl(url)
+          };
+          return originalOpen.apply(this, arguments);
+        };
+        XHR.prototype.send = function chrUtilsXhrSend() {
+          const info = this.__chrUtilsRequestInfo;
+          if (info && info.url) {
+            addRequestMonitorEntry({ type: 'xhr', method: info.method, url: info.url, ts: Date.now() });
+          }
+          return originalSend.apply(this, arguments);
+        };
+      }
+    }
+  };
+
+  const installRequestMonitorHook = () => {
+    if (requestMonitorHookInstalled) return;
+    requestMonitorHookInstalled = true;
+    window.addEventListener(REQUEST_MONITOR_EVENT, (event) => {
+      addRequestMonitorEntry(event.detail);
+    }, true);
+    window.addEventListener(REQUEST_MONITOR_READY_EVENT, () => {
+      window.__chrUtilsRequestMonitorPageHookReady = true;
+    }, true);
+
+    const source = `(() => {
+      const REQUEST_EVENT = ${JSON.stringify(REQUEST_MONITOR_EVENT)};
+      const READY_EVENT = ${JSON.stringify(REQUEST_MONITOR_READY_EVENT)};
+      if (window.__chrUtilsRequestMonitorPageHooked) return;
+      window.__chrUtilsRequestMonitorPageHooked = true;
+      const normalizeUrl = (input) => {
+        try {
+          if (typeof input === 'string') return input;
+          if (input && typeof input.url === 'string') return input.url;
+          if (input !== undefined && input !== null) return String(input);
+        } catch {}
+        return '';
+      };
+      const emit = (detail) => {
+        if (!detail || !detail.url) return;
+        try {
+          window.dispatchEvent(new CustomEvent(REQUEST_EVENT, { detail: {
+            type: detail.type,
+            method: detail.method || 'GET',
+            url: detail.url,
+            ts: Date.now()
+          }}));
+        } catch {}
+      };
+      const originalFetch = window.fetch;
+      if (typeof originalFetch === 'function') {
+        window.fetch = function chrUtilsFetch(input, init) {
+          const url = normalizeUrl(input);
+          const method = init && init.method
+            ? String(init.method)
+            : (input && typeof input.method === 'string' ? input.method : 'GET');
+          emit({ type: 'fetch', method, url });
+          return originalFetch.apply(this, arguments);
+        };
+      }
+      const XHR = window.XMLHttpRequest;
+      if (XHR && XHR.prototype) {
+        const originalOpen = XHR.prototype.open;
+        const originalSend = XHR.prototype.send;
+        if (typeof originalOpen === 'function' && typeof originalSend === 'function') {
+          XHR.prototype.open = function chrUtilsXhrOpen(method, url) {
+            this.__chrUtilsRequestInfo = {
+              method: method ? String(method) : 'GET',
+              url: normalizeUrl(url)
+            };
+            return originalOpen.apply(this, arguments);
+          };
+          XHR.prototype.send = function chrUtilsXhrSend() {
+            const info = this.__chrUtilsRequestInfo;
+            if (info && info.url) emit({ type: 'xhr', method: info.method, url: info.url });
+            return originalSend.apply(this, arguments);
+          };
+        }
+      }
+      try {
+        window.dispatchEvent(new CustomEvent(READY_EVENT));
+      } catch {}
+    })();`;
+    try {
+      const script = document.createElement('script');
+      script.textContent = source;
+      (document.documentElement || document.head || document.body).appendChild(script);
+      script.remove();
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to inject request monitor hook:', err);
+    }
+    window.setTimeout(() => {
+      if (!window.__chrUtilsRequestMonitorPageHookReady) {
+        installSandboxRequestMonitorHook();
+      }
+    }, 0);
+  };
+
+  installRequestMonitorHook();
+  installResourceRequestMonitorObserver();
 
   if (ENABLE_INSTAGRAM_VIDEO_FIX) {
     maybeInstallInstagramVideoFix();
@@ -601,7 +814,7 @@ iframe {
         100% { opacity: 0; transform: translate(-50%, -50%) scale(0.98); }
       }
     `;
-    document.head.appendChild(style);
+    (document.head || document.documentElement).appendChild(style);
   };
 
   const loadRightClickList = () => {
@@ -688,6 +901,35 @@ iframe {
       window.localStorage.setItem(LINK_MONITOR_REGEX_KEY, JSON.stringify(rows));
     } catch (err) {
       console.warn('[userscript-utils] Failed to save link monitor regex rows:', err);
+    }
+  };
+
+  const loadRequestMonitorRegexRows = () => {
+    try {
+      const raw = window.localStorage.getItem(REQUEST_MONITOR_REGEX_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const rows = [];
+      for (const item of parsed) {
+        if (!item || typeof item !== 'object') continue;
+        const pattern = typeof item.pattern === 'string' ? item.pattern.trim() : '';
+        const flags = typeof item.flags === 'string' ? item.flags.trim() : '';
+        if (!pattern) continue;
+        rows.push({ pattern, flags });
+      }
+      return rows;
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load request monitor regex rows:', err);
+      return [];
+    }
+  };
+
+  const saveRequestMonitorRegexRows = (rows) => {
+    try {
+      window.localStorage.setItem(REQUEST_MONITOR_REGEX_KEY, JSON.stringify(rows));
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save request monitor regex rows:', err);
     }
   };
 
@@ -1260,11 +1502,24 @@ iframe {
     linkMonitorDesc.textContent = 'Scan page links every 50ms with one or more regex patterns and collect deduped matches.';
     linkMonitorSection.append(linkMonitorTitle, linkMonitorBtn, linkMonitorDesc);
 
+    const requestMonitorSection = document.createElement('div');
+    requestMonitorSection.className = 'utils-section';
+    const requestMonitorTitle = document.createElement('h3');
+    requestMonitorTitle.textContent = 'Request Monitor';
+    const requestMonitorBtn = document.createElement('button');
+    requestMonitorBtn.type = 'button';
+    requestMonitorBtn.className = 'utils-btn';
+    requestMonitorBtn.textContent = 'Open request monitor panel';
+    requestMonitorBtn.addEventListener('click', () => openRequestMonitorPanel());
+    const requestMonitorDesc = document.createElement('p');
+    requestMonitorDesc.textContent = 'Log page request URLs and filter captured URLs with one or more regex patterns.';
+    requestMonitorSection.append(requestMonitorTitle, requestMonitorBtn, requestMonitorDesc);
+
     const footer = document.createElement('div');
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, xSection, ytSection, linkMonitorSection, footer);
+    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, xSection, ytSection, linkMonitorSection, requestMonitorSection, footer);
     enableDraggablePanel(panel, header);
     menuEl = panel;
     updateRightClickModeButtons();
@@ -2458,6 +2713,344 @@ iframe {
       mutationObserver,
       detachDrag
     };
+  };
+
+  const closeRequestMonitorPanel = () => {
+    if (!requestMonitorOverlayState) return;
+    const { overlay, style, mutationObserver, detachDrag } = requestMonitorOverlayState;
+    if (typeof detachDrag === 'function') {
+      detachDrag();
+    }
+    if (mutationObserver) {
+      mutationObserver.disconnect();
+    }
+    if (overlay && overlay.isConnected) {
+      overlay.remove();
+    }
+    if (style && style.isConnected) {
+      style.remove();
+    }
+    requestMonitorOverlayState = null;
+  };
+
+  const openRequestMonitorPanel = () => {
+    const OVERLAY_ID = 'request-monitor-overlay';
+    const STYLE_ID = 'request-monitor-style';
+    if (requestMonitorOverlayState && requestMonitorOverlayState.overlay && requestMonitorOverlayState.overlay.isConnected) {
+      return;
+    }
+    closeRequestMonitorPanel();
+
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      #${OVERLAY_ID} {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        width: min(640px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        background: rgba(12, 12, 12, 0.96);
+        color: #f3f3f3;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 13px;
+        line-height: 1.4;
+        border-radius: 0;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        z-index: 2147483647;
+        padding: 12px 14px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-sizing: border-box;
+      }
+      #${OVERLAY_ID} .request-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      #${OVERLAY_ID} .request-panel-title {
+        font-size: 16px;
+        font-weight: 600;
+      }
+      #${OVERLAY_ID} .request-panel-close {
+        border: none;
+        background: transparent;
+        color: #f87171;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+      }
+      #${OVERLAY_ID} .request-panel-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      #${OVERLAY_ID} .request-panel-input {
+        flex: 1;
+        min-width: 170px;
+        background: rgba(20, 20, 20, 0.9);
+        color: #f3f3f3;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 6px 8px;
+        font-size: 12px;
+      }
+      #${OVERLAY_ID} .request-panel-list {
+        margin-top: 8px;
+        padding: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(10, 10, 10, 0.7);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+        max-height: 320px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #${OVERLAY_ID} .request-panel-muted {
+        color: #b8b8b8;
+        font-size: 12px;
+      }
+      #${OVERLAY_ID} .utils-btn {
+        cursor: pointer;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 0;
+        padding: 4px 8px;
+        font-size: 12px;
+        font-weight: 600;
+        background: #2b2b2b;
+        color: #f1f1f1;
+      }
+      #${OVERLAY_ID} .utils-btn.secondary {
+        background: #1f1f1f;
+      }
+      #${OVERLAY_ID} .utils-btn.danger {
+        background: #381212;
+        border-color: rgba(248, 113, 113, 0.4);
+      }
+      #${OVERLAY_ID} .utils-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+    `;
+    document.head.appendChild(style);
+
+    const overlay = document.createElement('div');
+    overlay.id = OVERLAY_ID;
+
+    const header = document.createElement('div');
+    header.className = 'request-panel-header';
+    const title = document.createElement('div');
+    title.className = 'request-panel-title';
+    title.textContent = 'Request Monitor';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'request-panel-close';
+    closeBtn.textContent = '\u2715';
+    closeBtn.addEventListener('click', () => closeRequestMonitorPanel());
+    header.append(title, closeBtn);
+
+    const regexRowsWrap = document.createElement('div');
+    regexRowsWrap.className = 'request-panel-row';
+    regexRowsWrap.style.flexDirection = 'column';
+    regexRowsWrap.style.alignItems = 'stretch';
+    regexRowsWrap.style.gap = '6px';
+
+    const regexRows = [];
+    const persistRegexRows = () => {
+      const rowsToSave = [];
+      for (const row of regexRows) {
+        if (!row.patternInput.isConnected) continue;
+        const pattern = row.patternInput.value.trim();
+        const flags = row.flagsInput.value.trim();
+        if (!pattern) continue;
+        rowsToSave.push({ pattern, flags });
+      }
+      saveRequestMonitorRegexRows(rowsToSave);
+    };
+    const getCompiledRegexes = () => {
+      const compiled = [];
+      let invalidCount = 0;
+      for (const row of regexRows) {
+        if (!row.patternInput.isConnected) continue;
+        const pattern = row.patternInput.value.trim();
+        const flags = row.flagsInput.value.trim();
+        if (!pattern) continue;
+        try {
+          compiled.push(new RegExp(pattern, flags));
+          row.patternInput.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+          row.flagsInput.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+        } catch (err) {
+          invalidCount += 1;
+          row.patternInput.style.borderColor = 'rgba(248, 113, 113, 0.85)';
+          row.flagsInput.style.borderColor = 'rgba(248, 113, 113, 0.85)';
+        }
+      }
+      return { compiled, invalidCount };
+    };
+
+    const addRegexRow = (initialPattern = '', initialFlags = '', shouldPersist = true) => {
+      const row = document.createElement('div');
+      row.className = 'request-panel-row';
+      row.style.marginBottom = '0';
+      const patternInput = document.createElement('input');
+      patternInput.type = 'text';
+      patternInput.className = 'request-panel-input';
+      patternInput.placeholder = 'Regex pattern (blank shows all)';
+      patternInput.value = initialPattern;
+      const flagsInput = document.createElement('input');
+      flagsInput.type = 'text';
+      flagsInput.className = 'request-panel-input';
+      flagsInput.placeholder = 'Flags (optional, e.g. i)';
+      flagsInput.style.flex = '0 0 110px';
+      flagsInput.value = initialFlags;
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'utils-btn danger';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', () => {
+        row.remove();
+        persistRegexRows();
+        renderRequests();
+      });
+      patternInput.addEventListener('input', () => {
+        persistRegexRows();
+        renderRequests();
+      });
+      flagsInput.addEventListener('input', () => {
+        persistRegexRows();
+        renderRequests();
+      });
+      row.append(patternInput, flagsInput, removeBtn);
+      regexRowsWrap.appendChild(row);
+      regexRows.push({ row, patternInput, flagsInput });
+      if (shouldPersist) {
+        persistRegexRows();
+      }
+    };
+
+    const storedRegexRows = loadRequestMonitorRegexRows();
+    if (storedRegexRows.length) {
+      for (const { pattern, flags } of storedRegexRows) {
+        addRegexRow(pattern, flags, false);
+      }
+    } else {
+      addRegexRow('', 'i', false);
+    }
+    persistRegexRows();
+
+    const controlsRow = document.createElement('div');
+    controlsRow.className = 'request-panel-row';
+    const statusEl = document.createElement('div');
+    statusEl.style.flex = '1';
+    statusEl.textContent = 'Logging requests...';
+    const addRegexBtn = document.createElement('button');
+    addRegexBtn.type = 'button';
+    addRegexBtn.className = 'utils-btn secondary';
+    addRegexBtn.textContent = 'Add regex';
+    addRegexBtn.addEventListener('click', () => {
+      addRegexRow();
+      renderRequests();
+    });
+    controlsRow.append(statusEl, addRegexBtn);
+
+    const actionRow = document.createElement('div');
+    actionRow.className = 'request-panel-row';
+    const countEl = document.createElement('div');
+    countEl.style.flex = '1';
+    countEl.textContent = '0 requests';
+    const copyFilteredBtn = document.createElement('button');
+    copyFilteredBtn.type = 'button';
+    copyFilteredBtn.className = 'utils-btn secondary';
+    copyFilteredBtn.textContent = 'Copy visible URLs';
+    copyFilteredBtn.disabled = true;
+    const copyAllBtn = document.createElement('button');
+    copyAllBtn.type = 'button';
+    copyAllBtn.className = 'utils-btn secondary';
+    copyAllBtn.textContent = 'Copy all URLs';
+    copyAllBtn.disabled = true;
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'utils-btn secondary';
+    clearBtn.textContent = 'Clear log';
+    clearBtn.disabled = true;
+    actionRow.append(countEl, copyFilteredBtn, copyAllBtn, clearBtn);
+
+    const hint = document.createElement('div');
+    hint.className = 'request-panel-muted';
+    hint.textContent = `Captures fetch, XMLHttpRequest, and resource timing URLs from this page. Keeps the newest ${REQUEST_MONITOR_MAX_ENTRIES} entries.`;
+
+    const listEl = document.createElement('div');
+    listEl.className = 'request-panel-list';
+    listEl.textContent = 'No requests logged yet.';
+
+    overlay.append(header, regexRowsWrap, controlsRow, actionRow, hint, listEl);
+    document.body.appendChild(overlay);
+    const detachDrag = enableDraggablePanel(overlay, header);
+
+    let visibleEntries = [];
+    function formatRequestEntry(entry) {
+      const date = new Date(entry.ts || Date.now());
+      const time = date.toLocaleTimeString();
+      return `[${time}] ${entry.type.toUpperCase()} ${entry.method || 'GET'} ${entry.url}`;
+    }
+    function renderRequests() {
+      const { compiled, invalidCount } = getCompiledRegexes();
+      if (compiled.length) {
+        visibleEntries = requestMonitorEntries.filter((entry) => compiled.some((regex) => {
+          regex.lastIndex = 0;
+          return regex.test(entry.url);
+        }));
+      } else {
+        visibleEntries = requestMonitorEntries.slice();
+      }
+      statusEl.textContent = invalidCount
+        ? `Logging (${compiled.length ? `${compiled.length} active` : 'showing all'}, ${invalidCount} invalid)`
+        : `Logging (${compiled.length ? `${compiled.length} active` : 'showing all'})`;
+      countEl.textContent = `${visibleEntries.length} visible / ${requestMonitorEntries.length} total request${requestMonitorEntries.length === 1 ? '' : 's'}`;
+      listEl.textContent = visibleEntries.length
+        ? visibleEntries.map(formatRequestEntry).join('\n')
+        : (requestMonitorEntries.length ? 'No requests match the current filters.' : 'No requests logged yet.');
+      copyFilteredBtn.disabled = visibleEntries.length === 0;
+      copyAllBtn.disabled = requestMonitorEntries.length === 0;
+      clearBtn.disabled = requestMonitorEntries.length === 0;
+    }
+
+    copyFilteredBtn.addEventListener('click', () => {
+      if (!visibleEntries.length) return;
+      copyTextToClipboard(visibleEntries.map((entry) => entry.url).join('\n'));
+      showCopyToast('Copied visible request URLs!');
+    });
+    copyAllBtn.addEventListener('click', () => {
+      if (!requestMonitorEntries.length) return;
+      copyTextToClipboard(requestMonitorEntries.map((entry) => entry.url).join('\n'));
+      showCopyToast('Copied all request URLs!');
+    });
+    clearBtn.addEventListener('click', () => {
+      requestMonitorEntries.length = 0;
+      renderRequests();
+    });
+
+    let mutationObserver = null;
+    if (typeof MutationObserver === 'function') {
+      mutationObserver = new MutationObserver(() => {
+        if (!overlay.isConnected) {
+          closeRequestMonitorPanel();
+        }
+      });
+      mutationObserver.observe(document.body, { childList: true });
+    }
+
+    requestMonitorOverlayState = {
+      overlay,
+      style,
+      mutationObserver,
+      detachDrag,
+      render: renderRequests
+    };
+    renderRequests();
   };
 
   const closeYoutubeVideoPanel = () => {

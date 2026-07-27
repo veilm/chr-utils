@@ -1551,9 +1551,7 @@ iframe {
       btn.className = 'utils-btn secondary';
       btn.textContent = label;
       btn.addEventListener('click', () => {
-        rightClickPriority = mode;
-        saveRightClickPriority();
-        updateRightClickPriorityButtons();
+        setRightClickPriority(mode);
       });
       rightClickPriorityButtons.set(mode, btn);
       return btn;
@@ -1781,7 +1779,7 @@ iframe {
 
   const enterCommandPrompt = () => {
     commandPromptActive = true;
-    showCopyToast('Command: v Vimium Lite, l links');
+    showCopyToast('Command: v Vimium Lite, l links, i image right-click');
   };
 
   const handleCommandPromptKeyDown = (event) => {
@@ -1797,6 +1795,12 @@ iframe {
     }
     if (lowerKey === 'l') {
       copyAllPageLinks();
+      return true;
+    }
+    if (lowerKey === 'i') {
+      setRightClickPriority(RIGHT_CLICK_PRIORITY_IMAGE);
+      setRightClickMode(RIGHT_CLICK_MODE_COPY);
+      showCopyToast('Right-click: copy image address');
       return true;
     }
     if (lowerKey === 'escape') {
@@ -3581,6 +3585,14 @@ iframe {
       console.log('%cRight-click logger disabled.', 'background: #111; color: #f87171; padding: 5px;');
     }
     updateRightClickModeButtons();
+  };
+
+  const setRightClickPriority = (priority) => {
+    rightClickPriority = priority === RIGHT_CLICK_PRIORITY_IMAGE
+      ? RIGHT_CLICK_PRIORITY_IMAGE
+      : RIGHT_CLICK_PRIORITY_LINK;
+    saveRightClickPriority();
+    updateRightClickPriorityButtons();
   };
 
   const clearNumericPrefix = () => {

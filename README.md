@@ -7,7 +7,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 ## Features
 
 - Alt+Q menu with a right-click logger (disabled, copy+log, save-to-list) plus link/image priority toggle
-- Alt+Shift+Q enters command prompt mode: `v` toggles Vimium Lite for the page, `l` copies every page link href, and `i` makes right-click copy image addresses instead of enclosing link addresses
+- Alt+Shift+Q enters command prompt mode: `n` toggles an autosaved floating notepad on any page, `v` toggles Vimium Lite for the page, `l` copies every page link href, and `i` makes right-click copy image addresses instead of enclosing link addresses
 - Alt+P replaces the current tab with the clipboard URL (via local server)
 - Alt+Shift+P opens the clipboard URL in a new tab (via local server)
 - Alt+Y copies the current page URL with a brief overlay confirmation
@@ -27,6 +27,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - YouTube video scan panel with filters (title, views, timestamp, URLs, normalized counts)
 - Link monitor popup panel (50ms `<a href>` scan, multiple regex filters, deduped match list, copy/clear actions)
 - Request monitor popup panel (logs page request URLs from `fetch`, `XMLHttpRequest`, media elements, and resource timing, persistent regex filters, copy/clear actions)
+- Claude: the notepad appears automatically as a safe composer where Enter always inserts a newline; drafts autosave per chat and can be explicitly loaded into Claude's real composer without sending
 
 ## Files
 

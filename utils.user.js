@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.1.3
+// @version      0.1.4
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -152,6 +152,10 @@ video::-webkit-media-controls-overlay-enclosure {
   const DARK_MODE_STYLE_ID = 'userscript-utils-dark-mode-style';
   const DARK_MODE_SITE_MAP_KEY = 'userscript-utils:dark-mode-site-map';
   const DARK_MODE_LAST_MODE_KEY = 'userscript-utils:dark-mode-last-mode';
+  const CLAUDE_COMPOSER_ID = 'chr-utils-claude-composer';
+  const CLAUDE_COMPOSER_STYLE_ID = 'chr-utils-claude-composer-style';
+  const CLAUDE_COMPOSER_DRAFT_PREFIX = 'chr-utils:claude-composer:draft:';
+  const CLAUDE_COMPOSER_LAYOUT_KEY = 'chr-utils:claude-composer:layout';
   const RIGHT_CLICK_MODE_DISABLED = 'disabled';
   const RIGHT_CLICK_MODE_COPY = 'copy';
   const RIGHT_CLICK_MODE_LIST = 'list';
@@ -1433,6 +1437,368 @@ iframe {
     return detach;
   };
 
+  const isClaudeHost = () => {
+    try {
+      const host = window.location && window.location.hostname ? String(window.location.hostname) : '';
+      return host === 'claude.ai' || host.endsWith('.claude.ai');
+    } catch {
+      return false;
+    }
+  };
+
+  const getClaudeComposerDraftKey = () => {
+    const chatMatch = window.location.pathname.match(/^\/chat\/([^/?#]+)/);
+    const pageKey = chatMatch ? `chat:${chatMatch[1]}` : `page:${window.location.pathname}`;
+    return `${CLAUDE_COMPOSER_DRAFT_PREFIX}${pageKey}`;
+  };
+
+  const loadClaudeComposerLayout = () => {
+    try {
+      const raw = window.localStorage.getItem(CLAUDE_COMPOSER_LAYOUT_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load Claude composer layout:', err);
+      return {};
+    }
+  };
+
+  const saveClaudeComposerLayout = (layout) => {
+    try {
+      window.localStorage.setItem(CLAUDE_COMPOSER_LAYOUT_KEY, JSON.stringify(layout));
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save Claude composer layout:', err);
+    }
+  };
+
+  const installClaudeFloatingComposer = ({ force = false } = {}) => {
+    const claudePage = isClaudeHost();
+    if (!claudePage && !force) return null;
+    const existing = document.getElementById(CLAUDE_COMPOSER_ID);
+    if (existing) return existing;
+    if (!document.body) {
+      document.addEventListener('DOMContentLoaded', () => installClaudeFloatingComposer({ force }), { once: true });
+      return null;
+    }
+
+    const style = document.createElement('style');
+    style.id = CLAUDE_COMPOSER_STYLE_ID;
+    style.textContent = `
+      #${CLAUDE_COMPOSER_ID} {
+        position: fixed;
+        top: 72px;
+        right: 24px;
+        width: min(460px, calc(100vw - 32px));
+        box-sizing: border-box;
+        padding: 0;
+        background: #191919;
+        color: #f2f0e8;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 10px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 13px;
+        line-height: 1.4;
+        z-index: 2147483647;
+        overflow: hidden;
+      }
+      #${CLAUDE_COMPOSER_ID} .chr-utils-claude-composer-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 38px;
+        padding: 0 8px 0 12px;
+        background: #252525;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        user-select: none;
+      }
+      #${CLAUDE_COMPOSER_ID} .chr-utils-claude-composer-title {
+        flex: 1;
+        font-weight: 650;
+        letter-spacing: 0.01em;
+      }
+      #${CLAUDE_COMPOSER_ID} .chr-utils-claude-composer-count {
+        color: #aaa69c;
+        font-size: 11px;
+      }
+      #${CLAUDE_COMPOSER_ID} .chr-utils-claude-composer-toggle {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #d6d2c8;
+        cursor: pointer;
+        font: inherit;
+        font-size: 17px;
+      }
+      #${CLAUDE_COMPOSER_ID} .chr-utils-claude-composer-toggle:hover {
+        background: rgba(255, 255, 255, 0.09);
+      }
+      #${CLAUDE_COMPOSER_ID} .chr-utils-claude-composer-body {
+        padding: 10px;
+      }
+      #${CLAUDE_COMPOSER_ID}.collapsed .chr-utils-claude-composer-body {
+        display: none;
+      }
+      #${CLAUDE_COMPOSER_ID}.collapsed .chr-utils-claude-composer-header {
+        border-bottom: 0;
+      }
+      #${CLAUDE_COMPOSER_ID} textarea {
+        display: block;
+        width: 100%;
+        height: 260px;
+        min-height: 110px;
+        max-height: calc(100vh - 180px);
+        box-sizing: border-box;
+        resize: vertical;
+        padding: 11px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 7px;
+        outline: none;
+        background: #101010;
+        color: #f5f2e9;
+        caret-color: #f5f2e9;
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        tab-size: 2;
+      }
+      #${CLAUDE_COMPOSER_ID} textarea:focus {
+        border-color: #b8a780;
+        box-shadow: 0 0 0 1px #b8a780;
+      }
+      #${CLAUDE_COMPOSER_ID} .chr-utils-claude-composer-actions {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-top: 9px;
+      }
+      #${CLAUDE_COMPOSER_ID} .chr-utils-claude-composer-actions button {
+        padding: 6px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 6px;
+        background: #30302e;
+        color: #f3f0e7;
+        cursor: pointer;
+        font: 600 12px/1.3 system-ui, sans-serif;
+      }
+      #${CLAUDE_COMPOSER_ID} .chr-utils-claude-composer-actions button:first-child {
+        background: #d9c79f;
+        color: #1d1b17;
+        border-color: #d9c79f;
+      }
+      #${CLAUDE_COMPOSER_ID} .chr-utils-claude-composer-status {
+        flex: 1;
+        min-width: 0;
+        color: #aaa69c;
+        font-size: 11px;
+        text-align: right;
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+
+    const panel = document.createElement('section');
+    panel.id = CLAUDE_COMPOSER_ID;
+    panel.setAttribute('aria-label', 'Safe Claude composer');
+
+    const header = document.createElement('div');
+    header.className = 'chr-utils-claude-composer-header';
+    const title = document.createElement('div');
+    title.className = 'chr-utils-claude-composer-title';
+    title.textContent = claudePage ? 'Safe composer' : 'Quick notepad';
+    const count = document.createElement('div');
+    count.className = 'chr-utils-claude-composer-count';
+    const toggle = document.createElement('button');
+    toggle.className = 'chr-utils-claude-composer-toggle';
+    toggle.type = 'button';
+    toggle.setAttribute('aria-label', 'Collapse safe composer');
+    header.append(title, count, toggle);
+
+    const body = document.createElement('div');
+    body.className = 'chr-utils-claude-composer-body';
+    const textarea = document.createElement('textarea');
+    textarea.placeholder = 'Compose safely here — Enter always makes a new line.';
+    textarea.spellcheck = true;
+    textarea.setAttribute('aria-label', claudePage ? 'Safe Claude draft' : 'Quick notepad draft');
+
+    const actions = document.createElement('div');
+    actions.className = 'chr-utils-claude-composer-actions';
+    const loadButton = document.createElement('button');
+    loadButton.type = 'button';
+    loadButton.textContent = 'Load into Claude';
+    const copyButton = document.createElement('button');
+    copyButton.type = 'button';
+    copyButton.textContent = 'Copy';
+    const clearButton = document.createElement('button');
+    clearButton.type = 'button';
+    clearButton.textContent = 'Clear';
+    const status = document.createElement('div');
+    status.className = 'chr-utils-claude-composer-status';
+    status.textContent = 'Autosaved';
+    if (claudePage) {
+      actions.append(loadButton, copyButton, clearButton, status);
+    } else {
+      actions.append(copyButton, clearButton, status);
+    }
+    body.append(textarea, actions);
+    panel.append(header, body);
+    document.body.appendChild(panel);
+
+    const layout = loadClaudeComposerLayout();
+    if (Number.isFinite(layout.left) && Number.isFinite(layout.top)) {
+      const maxLeft = Math.max(8, window.innerWidth - panel.offsetWidth - 8);
+      const maxTop = Math.max(8, window.innerHeight - panel.offsetHeight - 8);
+      panel.style.left = `${Math.min(maxLeft, Math.max(8, layout.left))}px`;
+      panel.style.top = `${Math.min(maxTop, Math.max(8, layout.top))}px`;
+      panel.style.right = 'auto';
+    }
+    if (Number.isFinite(layout.textareaHeight)) {
+      textarea.style.height = `${Math.max(110, layout.textareaHeight)}px`;
+    }
+    panel.classList.toggle('collapsed', Boolean(layout.collapsed));
+
+    const updateToggle = () => {
+      const collapsed = panel.classList.contains('collapsed');
+      toggle.textContent = collapsed ? '+' : '\u2212';
+      toggle.setAttribute('aria-label', collapsed ? 'Expand safe composer' : 'Collapse safe composer');
+    };
+    const saveLayout = () => {
+      const rect = panel.getBoundingClientRect();
+      const measuredTextareaHeight = Math.round(textarea.getBoundingClientRect().height);
+      const textareaHeight = measuredTextareaHeight > 0
+        ? measuredTextareaHeight
+        : (Number.isFinite(layout.textareaHeight) ? layout.textareaHeight : 260);
+      Object.assign(layout, {
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+        textareaHeight,
+        collapsed: panel.classList.contains('collapsed')
+      });
+      saveClaudeComposerLayout(layout);
+    };
+    updateToggle();
+    enableDraggablePanel(panel, header);
+    header.addEventListener('pointerup', () => window.setTimeout(saveLayout, 0));
+    toggle.addEventListener('click', () => {
+      panel.classList.toggle('collapsed');
+      updateToggle();
+      saveLayout();
+    });
+    if (typeof ResizeObserver === 'function') {
+      const resizeObserver = new ResizeObserver(() => {
+        if (!panel.classList.contains('collapsed')) saveLayout();
+      });
+      resizeObserver.observe(textarea);
+    }
+
+    let activeDraftKey = getClaudeComposerDraftKey();
+    const loadDraft = () => {
+      try {
+        textarea.value = window.localStorage.getItem(activeDraftKey) || '';
+      } catch (err) {
+        console.warn('[userscript-utils] Failed to load Claude composer draft:', err);
+        textarea.value = '';
+      }
+      count.textContent = `${textarea.value.length.toLocaleString()} chars`;
+    };
+    const saveDraft = () => {
+      try {
+        window.localStorage.setItem(activeDraftKey, textarea.value);
+        status.textContent = 'Autosaved';
+      } catch (err) {
+        console.warn('[userscript-utils] Failed to save Claude composer draft:', err);
+        status.textContent = 'Save failed';
+      }
+      count.textContent = `${textarea.value.length.toLocaleString()} chars`;
+    };
+    loadDraft();
+    textarea.addEventListener('input', saveDraft);
+
+    // Keep Enter inside this standalone editor. Do not prevent its default newline.
+    for (const eventName of ['keydown', 'keypress', 'keyup']) {
+      textarea.addEventListener(eventName, (event) => {
+        if (event.key === 'Enter') event.stopPropagation();
+      });
+    }
+
+    const findClaudeEditor = () => document.querySelector(
+      '[contenteditable="true"][aria-label="Write your prompt to Claude"], .ProseMirror[contenteditable="true"]'
+    );
+    const replaceClaudeEditorText = (editor, text) => {
+      editor.focus();
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      let inserted = false;
+      try {
+        inserted = document.execCommand('insertText', false, text);
+      } catch {}
+      if (!inserted) {
+        editor.replaceChildren();
+        for (const line of text.split('\n')) {
+          const paragraph = document.createElement('p');
+          paragraph.textContent = line || '\u200b';
+          editor.appendChild(paragraph);
+        }
+        editor.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertText',
+          data: text
+        }));
+      }
+    };
+
+    loadButton.addEventListener('click', () => {
+      const editor = findClaudeEditor();
+      if (!editor) {
+        status.textContent = 'Claude editor not found';
+        return;
+      }
+      replaceClaudeEditorText(editor, textarea.value);
+      status.textContent = 'Loaded — not sent';
+    });
+    copyButton.addEventListener('click', async () => {
+      await copyTextToClipboard(textarea.value);
+      status.textContent = 'Copied';
+    });
+    clearButton.addEventListener('click', () => {
+      if (textarea.value && !window.confirm('Clear this saved Claude draft?')) return;
+      textarea.value = '';
+      saveDraft();
+      textarea.focus();
+    });
+
+    window.setInterval(() => {
+      const nextDraftKey = getClaudeComposerDraftKey();
+      if (nextDraftKey === activeDraftKey) return;
+      saveDraft();
+      activeDraftKey = nextDraftKey;
+      loadDraft();
+      status.textContent = 'Draft switched';
+    }, 500);
+    return panel;
+  };
+
+  const toggleFloatingComposer = () => {
+    const existing = document.getElementById(CLAUDE_COMPOSER_ID);
+    if (existing) {
+      existing.hidden = !existing.hidden;
+      if (!existing.hidden) {
+        const textarea = existing.querySelector('textarea');
+        if (textarea) textarea.focus();
+      }
+      showCopyToast(existing.hidden ? 'Quick notepad hidden' : 'Quick notepad shown');
+      return;
+    }
+    const panel = installClaudeFloatingComposer({ force: true });
+    const textarea = panel && panel.querySelector('textarea');
+    if (textarea) textarea.focus();
+    showCopyToast('Quick notepad shown');
+  };
+
   rightClickList = loadRightClickList();
   vimiumLiteEnabled = loadVimiumLiteEnabled();
   rightClickPriority = loadRightClickPriority();
@@ -1779,7 +2145,7 @@ iframe {
 
   const enterCommandPrompt = () => {
     commandPromptActive = true;
-    showCopyToast('Command: v Vimium Lite, l links, i image right-click');
+    showCopyToast('Command: n notepad, v Vimium Lite, l links, i image right-click');
   };
 
   const handleCommandPromptKeyDown = (event) => {
@@ -1801,6 +2167,10 @@ iframe {
       setRightClickPriority(RIGHT_CLICK_PRIORITY_IMAGE);
       setRightClickMode(RIGHT_CLICK_MODE_COPY);
       showCopyToast('Right-click: copy image address');
+      return true;
+    }
+    if (lowerKey === 'n') {
+      toggleFloatingComposer();
       return true;
     }
     if (lowerKey === 'escape') {
@@ -3731,7 +4101,10 @@ iframe {
     if (handleCommandPromptKeyDown(event)) return;
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
     if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q') {
-      if (shouldIgnoreKeyEvent(event)) return;
+      const fromFloatingComposer = event.target && event.target.closest
+        ? event.target.closest(`#${CLAUDE_COMPOSER_ID}`)
+        : null;
+      if (shouldIgnoreKeyEvent(event) && !fromFloatingComposer) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       enterCommandPrompt();
@@ -3921,6 +4294,7 @@ iframe {
   }, true);
   window.addEventListener('blur', stopScroll);
   window.addEventListener('blur', teardownLinkHints);
+  installClaudeFloatingComposer();
 
   const runImageHostAudit = () => {
     const previousAudit = window.__imageHostAudit;

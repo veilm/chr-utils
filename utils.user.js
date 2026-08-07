@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.1.4
+// @version      0.1.5
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -134,6 +134,8 @@ video::-webkit-media-controls-overlay-enclosure {
   const MENU_ID = 'userscript-utils-menu';
   const STYLE_ID = 'userscript-utils-style';
   const COPY_TOAST_ID = 'userscript-utils-copy-toast';
+  const COMMAND_HINT_ID = 'userscript-utils-command-hint';
+  const COMMAND_HINT_TIMEOUT_MS = 5000;
   const COMMAND_SERVER_URL = 'http://127.0.0.1:61483/run';
   const TOKEN_VALUE_KEY = 'chr-utils-token';
   const CLIPBOARD_CMD = 'clip -o';
@@ -341,6 +343,7 @@ iframe {
   let scrollTargetIsWindow = true;
   let linkHintState = null;
   let commandPromptActive = false;
+  let commandPromptTimer = null;
   const scrollBehaviorOverrides = new Map();
   let lastPointerTarget = null;
 
@@ -906,6 +909,58 @@ iframe {
         pointer-events: none;
         opacity: 0;
         animation: utils-copy-toast 520ms ease-out;
+      }
+      #${COMMAND_HINT_ID} {
+        position: fixed;
+        top: 18px;
+        left: 50%;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px 14px;
+        max-width: calc(100vw - 32px);
+        box-sizing: border-box;
+        transform: translateX(-50%);
+        padding: 9px 12px;
+        background: rgba(16, 16, 16, 0.97);
+        color: #e9e7e2;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 8px;
+        box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 12px;
+        line-height: 1.3;
+        z-index: 2147483647;
+        opacity: 1;
+        transition: opacity 110ms ease-out, transform 110ms ease-out;
+      }
+      #${COMMAND_HINT_ID}.closing {
+        opacity: 0;
+        transform: translate(-50%, -4px);
+        pointer-events: none;
+      }
+      #${COMMAND_HINT_ID} .utils-command-hint-label {
+        color: #a9a69e;
+        font-weight: 600;
+      }
+      #${COMMAND_HINT_ID} .utils-command-hint-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        white-space: nowrap;
+      }
+      #${COMMAND_HINT_ID} kbd {
+        min-width: 20px;
+        box-sizing: border-box;
+        padding: 2px 5px;
+        background: #343330;
+        color: #fffdf7;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 4px;
+        box-shadow: inset 0 -1px rgba(0, 0, 0, 0.45);
+        font: 700 11px/1.3 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        text-align: center;
       }
       .utils-rc-flash {
         outline: 3px solid rgba(255, 255, 255, 0.98) !important;
@@ -2143,14 +2198,69 @@ iframe {
     showCopyToast(`Copied ${links.length} link${links.length === 1 ? '' : 's'}!`);
   };
 
+  const dismissCommandHint = ({ clearTimer = true } = {}) => {
+    if (clearTimer && commandPromptTimer !== null) {
+      window.clearTimeout(commandPromptTimer);
+      commandPromptTimer = null;
+    }
+    const hint = document.getElementById(COMMAND_HINT_ID);
+    if (!hint) return;
+    hint.classList.add('closing');
+    window.setTimeout(() => hint.remove(), 130);
+  };
+
+  const showCommandHint = () => {
+    ensureStyle();
+    const existing = document.getElementById(COMMAND_HINT_ID);
+    if (existing) existing.remove();
+
+    const hint = document.createElement('div');
+    hint.id = COMMAND_HINT_ID;
+    hint.setAttribute('role', 'status');
+    hint.setAttribute('aria-label', 'Userscript Utils commands');
+
+    const label = document.createElement('span');
+    label.className = 'utils-command-hint-label';
+    label.textContent = 'Command';
+    hint.appendChild(label);
+
+    for (const [key, description] of [
+      ['N', 'Notepad'],
+      ['V', 'Vimium Lite'],
+      ['L', 'Copy links'],
+      ['I', 'Image right-click'],
+      ['Esc', 'Cancel']
+    ]) {
+      const item = document.createElement('span');
+      item.className = 'utils-command-hint-item';
+      const keycap = document.createElement('kbd');
+      keycap.textContent = key;
+      const text = document.createElement('span');
+      text.textContent = description;
+      item.append(keycap, text);
+      hint.appendChild(item);
+    }
+    document.body.appendChild(hint);
+  };
+
   const enterCommandPrompt = () => {
     commandPromptActive = true;
-    showCopyToast('Command: n notepad, v Vimium Lite, l links, i image right-click');
+    if (commandPromptTimer !== null) {
+      window.clearTimeout(commandPromptTimer);
+    }
+    showCommandHint();
+    commandPromptTimer = window.setTimeout(() => {
+      commandPromptTimer = null;
+      if (!commandPromptActive) return;
+      commandPromptActive = false;
+      dismissCommandHint({ clearTimer: false });
+    }, COMMAND_HINT_TIMEOUT_MS);
   };
 
   const handleCommandPromptKeyDown = (event) => {
     if (!commandPromptActive) return false;
     commandPromptActive = false;
+    dismissCommandHint();
     event.preventDefault();
     event.stopImmediatePropagation();
 

@@ -2028,6 +2028,23 @@ iframe {
         font: inherit;
         text-decoration: underline;
       }
+      .chr-utils-reddit-mute-button {
+        appearance: none;
+        align-self: center;
+        margin-left: 6px;
+        border: 0;
+        padding: 1px 4px;
+        background: transparent;
+        color: var(--color-neutral-content-weak, #666);
+        cursor: pointer;
+        font: 11px/1.3 system-ui, sans-serif;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .chr-utils-reddit-mute-button:hover,
+      .chr-utils-reddit-mute-button:focus-visible {
+        color: var(--color-danger-content, #c33);
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   };
@@ -2049,9 +2066,35 @@ iframe {
     delete post.__chrUtilsRedditMutePlaceholder;
   };
 
+  const ensureRedditMuteButton = (post, username) => {
+    let button = post.querySelector(':scope .chr-utils-reddit-mute-button');
+    if (!redditMutingEnabled || !username) {
+      if (button) button.remove();
+      return;
+    }
+    if (!button) {
+      const target = post.querySelector('[slot="authorName"]') || post.querySelector('.tagline');
+      if (!target) return;
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'chr-utils-reddit-mute-button';
+      button.textContent = 'Mute';
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        addRedditMutedUser(button.dataset.redditUsername || '');
+      });
+      target.appendChild(button);
+    }
+    button.dataset.redditUsername = username;
+    button.setAttribute('aria-label', `Mute u/${username} on Reddit`);
+    button.title = `Mute u/${username}`;
+  };
+
   const processRedditPost = (post) => {
     if (!post || post.nodeType !== 1) return;
     const username = getRedditPostAuthor(post);
+    ensureRedditMuteButton(post, username);
     if (!redditMutingEnabled || !isRedditUserMuted(username)) {
       restoreRedditPost(post);
       return;

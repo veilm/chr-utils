@@ -2448,7 +2448,7 @@ iframe {
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, rightClickSection, navSection, darkModeSection, redditMuteSection, auditSection, xSection, ytSection, linkMonitorSection, requestMonitorSection, footer);
+    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, xSection, ytSection, linkMonitorSection, requestMonitorSection, redditMuteSection, footer);
     enableDraggablePanel(panel, header);
     menuEl = panel;
     updateRightClickModeButtons();

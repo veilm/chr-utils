@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.1.5
+// @version      0.1.6
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -151,6 +151,9 @@ video::-webkit-media-controls-overlay-enclosure {
   const REQUEST_MONITOR_MAX_ENTRIES = 1000;
   const X_SETTINGS_KEY = 'userscript-utils:x-settings';
   const X_STYLE_ID = 'userscript-utils-x-style';
+  const REDDIT_MUTED_USERS_KEY = 'userscript-utils:reddit-muted-users';
+  const REDDIT_MUTING_ENABLED_KEY = 'userscript-utils:reddit-muting-enabled';
+  const REDDIT_MUTE_STYLE_ID = 'userscript-utils-reddit-mute-style';
   const DARK_MODE_STYLE_ID = 'userscript-utils-dark-mode-style';
   const DARK_MODE_SITE_MAP_KEY = 'userscript-utils:dark-mode-site-map';
   const DARK_MODE_LAST_MODE_KEY = 'userscript-utils:dark-mode-last-mode';
@@ -336,6 +339,11 @@ iframe {
   let gPendingTimer = null;
   let xSettings = { ...DEFAULT_X_SETTINGS };
   let xSettingsInputs = null;
+  let redditMutedUsers = [];
+  let redditMutingEnabled = true;
+  let redditMuteObserver = null;
+  let redditMuteToggleButton = null;
+  let redditMuteListEl = null;
   let navJDown = false;
   let navKDown = false;
   let lastNavKey = null;
@@ -875,6 +883,27 @@ iframe {
         flex-wrap: wrap;
         gap: 6px;
       }
+      #${MENU_ID} .utils-text-input {
+        min-width: 0;
+        flex: 1;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 0;
+        padding: 6px 8px;
+        background: #111;
+        color: #f5f5f5;
+        font: inherit;
+      }
+      #${MENU_ID} .utils-list-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #${MENU_ID} .utils-list-row + .utils-list-row {
+        margin-top: 6px;
+      }
+      #${MENU_ID} .utils-list-row > span {
+        flex: 1;
+      }
       #${MENU_ID} .utils-list {
         margin-top: 8px;
         padding: 8px;
@@ -1108,6 +1137,60 @@ iframe {
       window.localStorage.setItem(RIGHT_CLICK_LIST_KEY, JSON.stringify(rightClickList));
     } catch (err) {
       console.warn('[userscript-utils] Failed to save right-click list:', err);
+    }
+  };
+
+  const normalizeRedditUsername = (value) => String(value || '')
+    .trim()
+    .replace(/^\/?u\//i, '')
+    .replace(/^@/, '')
+    .trim();
+
+  const loadRedditMutedUsers = () => {
+    try {
+      const stored = typeof GM_getValue === 'function'
+        ? GM_getValue(REDDIT_MUTED_USERS_KEY, [])
+        : JSON.parse(window.localStorage.getItem(REDDIT_MUTED_USERS_KEY) || '[]');
+      if (!Array.isArray(stored)) return [];
+      const seen = new Set();
+      return stored.reduce((users, value) => {
+        const username = normalizeRedditUsername(value);
+        const key = username.toLowerCase();
+        if (username && !seen.has(key)) {
+          seen.add(key);
+          users.push(username);
+        }
+        return users;
+      }, []);
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load muted Reddit users:', err);
+      return [];
+    }
+  };
+
+  const loadRedditMutingEnabled = () => {
+    try {
+      if (typeof GM_getValue === 'function') {
+        return GM_getValue(REDDIT_MUTING_ENABLED_KEY, true) !== false;
+      }
+      return window.localStorage.getItem(REDDIT_MUTING_ENABLED_KEY) !== 'false';
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load Reddit muting setting:', err);
+      return true;
+    }
+  };
+
+  const saveRedditMuteSettings = () => {
+    try {
+      if (typeof GM_setValue === 'function') {
+        GM_setValue(REDDIT_MUTED_USERS_KEY, redditMutedUsers);
+        GM_setValue(REDDIT_MUTING_ENABLED_KEY, redditMutingEnabled);
+      } else {
+        window.localStorage.setItem(REDDIT_MUTED_USERS_KEY, JSON.stringify(redditMutedUsers));
+        window.localStorage.setItem(REDDIT_MUTING_ENABLED_KEY, String(redditMutingEnabled));
+      }
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save Reddit mute settings:', err);
     }
   };
 
@@ -1858,6 +1941,8 @@ iframe {
   vimiumLiteEnabled = loadVimiumLiteEnabled();
   rightClickPriority = loadRightClickPriority();
   xSettings = loadXSettings();
+  redditMutedUsers = loadRedditMutedUsers();
+  redditMutingEnabled = loadRedditMutingEnabled();
   darkModeSiteMap = loadDarkModeSiteMap();
   lastDarkMode = loadLastDarkMode();
   currentDarkMode = normalizeDarkMode(darkModeSiteMap[getCurrentSiteKey()]) || DARK_MODE_OFF;
@@ -1894,6 +1979,205 @@ iframe {
     updateVimiumLiteButton();
     if (feedback) {
       showCopyToast(vimiumLiteEnabled ? 'Vimium Lite: enabled (this page)' : 'Vimium Lite: disabled (this page)');
+    }
+  };
+
+  const isRedditHost = () => {
+    try {
+      const host = String(window.location.hostname || '').toLowerCase();
+      return host === 'reddit.com' || host.endsWith('.reddit.com');
+    } catch {
+      return false;
+    }
+  };
+
+  const isRedditUserMuted = (username) => {
+    const key = normalizeRedditUsername(username).toLowerCase();
+    return Boolean(key) && redditMutedUsers.some((value) => value.toLowerCase() === key);
+  };
+
+  const ensureRedditMuteStyle = () => {
+    if (!isRedditHost() || document.getElementById(REDDIT_MUTE_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = REDDIT_MUTE_STYLE_ID;
+    style.textContent = `
+      .chr-utils-reddit-muted-post {
+        display: none !important;
+      }
+      .chr-utils-reddit-muted-placeholder {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 38px;
+        margin: 2px 0;
+        padding: 7px 14px;
+        border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+        background: var(--color-neutral-background, transparent);
+        color: var(--color-neutral-content-weak, #666);
+        font: 12px/1.3 system-ui, sans-serif;
+      }
+      .chr-utils-reddit-muted-placeholder button {
+        appearance: none;
+        border: 0;
+        padding: 3px 6px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font: inherit;
+        text-decoration: underline;
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  };
+
+  const getRedditPostAuthor = (post) => {
+    if (!post || post.nodeType !== 1) return '';
+    return normalizeRedditUsername(
+      post.getAttribute('author')
+      || post.getAttribute('data-author')
+      || (post.dataset && post.dataset.author)
+    );
+  };
+
+  const restoreRedditPost = (post) => {
+    if (!post || post.nodeType !== 1) return;
+    post.classList.remove('chr-utils-reddit-muted-post');
+    const placeholder = post.__chrUtilsRedditMutePlaceholder;
+    if (placeholder && placeholder.isConnected) placeholder.remove();
+    delete post.__chrUtilsRedditMutePlaceholder;
+  };
+
+  const processRedditPost = (post) => {
+    if (!post || post.nodeType !== 1) return;
+    const username = getRedditPostAuthor(post);
+    if (!redditMutingEnabled || !isRedditUserMuted(username)) {
+      restoreRedditPost(post);
+      return;
+    }
+    if (post.classList.contains('chr-utils-reddit-muted-post')
+        && post.__chrUtilsRedditMutePlaceholder
+        && post.__chrUtilsRedditMutePlaceholder.isConnected) {
+      return;
+    }
+
+    restoreRedditPost(post);
+    const placeholder = document.createElement('div');
+    placeholder.className = 'chr-utils-reddit-muted-placeholder';
+    placeholder.dataset.chrUtilsRedditMutedPlaceholder = username.toLowerCase();
+    const label = document.createElement('span');
+    label.textContent = `(Muted user u/${username})`;
+    const unmuteButton = document.createElement('button');
+    unmuteButton.type = 'button';
+    unmuteButton.textContent = 'Unmute';
+    unmuteButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      removeRedditMutedUser(username);
+    });
+    placeholder.append(label, unmuteButton);
+    post.before(placeholder);
+    post.classList.add('chr-utils-reddit-muted-post');
+    post.__chrUtilsRedditMutePlaceholder = placeholder;
+  };
+
+  const scanRedditPosts = (root = document) => {
+    if (!isRedditHost() || !root) return;
+    const selector = 'shreddit-post[author], .thing[data-author]';
+    if (root.nodeType === 1 && root.matches(selector)) processRedditPost(root);
+    if (root.querySelectorAll) root.querySelectorAll(selector).forEach(processRedditPost);
+  };
+
+  const updateRedditMuteUI = () => {
+    if (redditMuteToggleButton) {
+      redditMuteToggleButton.textContent = `Reddit muting: ${redditMutingEnabled ? 'On' : 'Off'}`;
+      redditMuteToggleButton.classList.toggle('active', redditMutingEnabled);
+      redditMuteToggleButton.classList.toggle('secondary', !redditMutingEnabled);
+    }
+    if (!redditMuteListEl) return;
+    redditMuteListEl.replaceChildren();
+    if (!redditMutedUsers.length) {
+      redditMuteListEl.textContent = 'No muted users.';
+      return;
+    }
+    redditMutedUsers.forEach((username) => {
+      const row = document.createElement('div');
+      row.className = 'utils-list-row';
+      const label = document.createElement('span');
+      label.textContent = `u/${username}`;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'utils-btn secondary';
+      button.textContent = 'Unmute';
+      button.addEventListener('click', () => removeRedditMutedUser(username));
+      row.append(label, button);
+      redditMuteListEl.appendChild(row);
+    });
+  };
+
+  const refreshRedditMutedPosts = () => {
+    if (!isRedditHost()) return;
+    ensureRedditMuteStyle();
+    document.querySelectorAll('shreddit-post[author], .thing[data-author]').forEach(processRedditPost);
+  };
+
+  const addRedditMutedUser = (value) => {
+    const username = normalizeRedditUsername(value);
+    if (!username || isRedditUserMuted(username)) return false;
+    redditMutedUsers.push(username);
+    redditMutedUsers.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    saveRedditMuteSettings();
+    updateRedditMuteUI();
+    refreshRedditMutedPosts();
+    showCopyToast(`Muted u/${username} on Reddit`);
+    return true;
+  };
+
+  function removeRedditMutedUser(value) {
+    const key = normalizeRedditUsername(value).toLowerCase();
+    const previousLength = redditMutedUsers.length;
+    redditMutedUsers = redditMutedUsers.filter((username) => username.toLowerCase() !== key);
+    if (redditMutedUsers.length === previousLength) return false;
+    saveRedditMuteSettings();
+    updateRedditMuteUI();
+    refreshRedditMutedPosts();
+    showCopyToast(`Unmuted u/${normalizeRedditUsername(value)} on Reddit`);
+    return true;
+  }
+
+  const setRedditMutingEnabled = (enabled) => {
+    redditMutingEnabled = Boolean(enabled);
+    saveRedditMuteSettings();
+    updateRedditMuteUI();
+    refreshRedditMutedPosts();
+  };
+
+  const installRedditMuteMode = () => {
+    if (!isRedditHost() || redditMuteObserver) return;
+    ensureRedditMuteStyle();
+    const start = () => {
+      scanRedditPosts(document);
+      redditMuteObserver = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+          if (mutation.type === 'attributes') {
+            processRedditPost(mutation.target);
+            return;
+          }
+          mutation.addedNodes.forEach((node) => scanRedditPosts(node));
+        });
+      });
+      redditMuteObserver.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['author', 'data-author']
+      });
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start, { once: true });
+    } else {
+      start();
     }
   };
 
@@ -2061,6 +2345,55 @@ iframe {
     darkModeDesc.textContent = 'Saved per host. Alt+Shift+A toggles this site on or off using the last selected mode.';
     darkModeSection.append(darkModeTitle, darkModeControls, darkModeDesc);
 
+    const redditMuteSection = document.createElement('div');
+    redditMuteSection.className = 'utils-section';
+    const redditMuteTitle = document.createElement('h3');
+    redditMuteTitle.textContent = 'Reddit Muted Users';
+    const redditMuteControls = document.createElement('div');
+    redditMuteControls.className = 'utils-btn-row';
+    redditMuteToggleButton = document.createElement('button');
+    redditMuteToggleButton.type = 'button';
+    redditMuteToggleButton.className = 'utils-btn';
+    redditMuteToggleButton.addEventListener('click', () => {
+      setRedditMutingEnabled(!redditMutingEnabled);
+    });
+    const redditMuteInput = document.createElement('input');
+    redditMuteInput.type = 'text';
+    redditMuteInput.className = 'utils-text-input';
+    redditMuteInput.placeholder = 'Username or u/username';
+    redditMuteInput.autocomplete = 'off';
+    const redditMuteAddButton = document.createElement('button');
+    redditMuteAddButton.type = 'button';
+    redditMuteAddButton.className = 'utils-btn';
+    redditMuteAddButton.textContent = 'Mute';
+    const submitRedditMute = () => {
+      if (addRedditMutedUser(redditMuteInput.value)) redditMuteInput.value = '';
+      redditMuteInput.focus();
+    };
+    redditMuteAddButton.addEventListener('click', submitRedditMute);
+    redditMuteInput.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      submitRedditMute();
+    });
+    const redditMuteInputRow = document.createElement('div');
+    redditMuteInputRow.className = 'utils-btn-row';
+    redditMuteInputRow.style.marginTop = '6px';
+    redditMuteInputRow.append(redditMuteInput, redditMuteAddButton);
+    const redditMuteDesc = document.createElement('p');
+    redditMuteDesc.textContent = 'Replaces feed posts by muted users with a thin placeholder. The list is shared across Reddit and persists after refreshes.';
+    redditMuteListEl = document.createElement('div');
+    redditMuteListEl.className = 'utils-list';
+    redditMuteControls.append(redditMuteToggleButton);
+    redditMuteSection.append(
+      redditMuteTitle,
+      redditMuteControls,
+      redditMuteInputRow,
+      redditMuteDesc,
+      redditMuteListEl
+    );
+    updateRedditMuteUI();
+
     const xSection = document.createElement('div');
     xSection.className = 'utils-section';
     const xTitle = document.createElement('h3');
@@ -2115,7 +2448,7 @@ iframe {
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, xSection, ytSection, linkMonitorSection, requestMonitorSection, footer);
+    panel.append(header, rightClickSection, navSection, darkModeSection, redditMuteSection, auditSection, xSection, ytSection, linkMonitorSection, requestMonitorSection, footer);
     enableDraggablePanel(panel, header);
     menuEl = panel;
     updateRightClickModeButtons();
@@ -4396,6 +4729,7 @@ iframe {
 
   setRightClickMode(RIGHT_CLICK_MODE_COPY);
   applyXSettings();
+  installRedditMuteMode();
   document.addEventListener('keydown', onKeyDown, true);
   document.addEventListener('keydown', onKeyDownNav, true);
   document.addEventListener('keyup', onKeyUpNav, true);

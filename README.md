@@ -22,6 +22,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
   - hint labels stay fixed-width per page; if any two-letter hints are needed, all hints become two letters
   - F to show clickable-element hints and open links in a new tab
 - X settings panel (persistent): hide selected left-nav entries, hide right sidebar, and hide Grok action buttons on posts
+- Reddit muted-users mode: maintain a persistent, Reddit-wide username list and replace those users' feed posts with compact placeholders that can unmute them in place
 - Dark mode presets: `Midnight` (direct recolor), `Invert` (full-page invert), and `Amber` (warm sepia-like recolor)
 - Image host audit overlay (highlights images, iframes, and links)
 - YouTube video scan panel with filters (title, views, timestamp, URLs, normalized counts)

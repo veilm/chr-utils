@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.1.6
+// @version      0.1.7
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -315,6 +315,7 @@ iframe {
   let rightClickListenerAttached = false;
   let rightClickList = [];
   let menuOpenedOnce = false;
+  let forcePasteTarget = null;
   let vimiumLiteEnabled = true;
   let vimiumLiteButton = null;
   let ytVideoLastResults = [];
@@ -2232,6 +2233,29 @@ iframe {
     });
   };
 
+  const isForcePasteTarget = (el) => {
+    if (!el || !el.isConnected || el.disabled || el.readOnly) return false;
+    if (el instanceof HTMLTextAreaElement) return true;
+    if (el instanceof HTMLInputElement) {
+      return !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(el.type);
+    }
+    return el instanceof HTMLElement && el.isContentEditable;
+  };
+
+  const getDeepActiveElement = () => {
+    let active = document.activeElement;
+    while (active && active.shadowRoot && active.shadowRoot.activeElement) {
+      active = active.shadowRoot.activeElement;
+    }
+    return active;
+  };
+
+  const rememberForcePasteTarget = (candidate) => {
+    if (isForcePasteTarget(candidate) && !(menuEl && menuEl.contains(candidate))) {
+      forcePasteTarget = candidate;
+    }
+  };
+
   const buildMenu = () => {
     if (menuEl) return menuEl;
     ensureStyle();
@@ -2253,6 +2277,19 @@ iframe {
     closeBtn.addEventListener('click', () => setMenuOpen(false));
 
     header.append(title, closeBtn);
+
+    const forcePasteSection = document.createElement('div');
+    forcePasteSection.className = 'utils-section';
+    const forcePasteTitle = document.createElement('h3');
+    forcePasteTitle.textContent = 'Force Paste';
+    const forcePasteBtn = document.createElement('button');
+    forcePasteBtn.type = 'button';
+    forcePasteBtn.className = 'utils-btn';
+    forcePasteBtn.textContent = 'Paste clipboard into last field';
+    forcePasteBtn.addEventListener('click', () => forcePasteFromClipboard());
+    const forcePasteDesc = document.createElement('p');
+    forcePasteDesc.textContent = 'Focus a text or password field before opening this menu. Inserts without firing a paste event, bypassing sites that block paste.';
+    forcePasteSection.append(forcePasteTitle, forcePasteBtn, forcePasteDesc);
 
     const auditSection = document.createElement('div');
     auditSection.className = 'utils-section';
@@ -2491,7 +2528,7 @@ iframe {
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, xSection, ytSection, linkMonitorSection, requestMonitorSection, redditMuteSection, footer);
+    panel.append(header, forcePasteSection, rightClickSection, navSection, darkModeSection, auditSection, xSection, ytSection, linkMonitorSection, requestMonitorSection, redditMuteSection, footer);
     enableDraggablePanel(panel, header);
     menuEl = panel;
     updateRightClickModeButtons();
@@ -2503,6 +2540,7 @@ iframe {
 
   const setMenuOpen = (open) => {
     if (open) {
+      rememberForcePasteTarget(getDeepActiveElement());
       if (!menuEl) {
         menuEl = buildMenu();
       }
@@ -2987,6 +3025,88 @@ iframe {
       }
     });
   });
+
+  const createForcedInputEvent = () => {
+    try {
+      return new InputEvent('input', {
+        bubbles: true,
+        composed: true,
+        inputType: 'insertFromPaste',
+        data: null
+      });
+    } catch {
+      return new Event('input', { bubbles: true, composed: true });
+    }
+  };
+
+  const insertTextIntoField = (target, text) => {
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      const currentValue = target.value || '';
+      const selectionStart = Number.isInteger(target.selectionStart) ? target.selectionStart : currentValue.length;
+      const selectionEnd = Number.isInteger(target.selectionEnd) ? target.selectionEnd : selectionStart;
+      const nextValue = currentValue.slice(0, selectionStart) + text + currentValue.slice(selectionEnd);
+      const prototype = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const valueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+      if (!valueSetter) return false;
+      target.focus({ preventScroll: true });
+      valueSetter.call(target, nextValue);
+      const caretPosition = selectionStart + text.length;
+      try {
+        target.setSelectionRange(caretPosition, caretPosition);
+      } catch {}
+      target.dispatchEvent(createForcedInputEvent());
+      return true;
+    }
+
+    if (target instanceof HTMLElement && target.isContentEditable) {
+      target.focus({ preventScroll: true });
+      const selection = window.getSelection();
+      let range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+      if (!range || !target.contains(range.commonAncestorContainer)) {
+        range = document.createRange();
+        range.selectNodeContents(target);
+        range.collapse(false);
+      }
+      range.deleteContents();
+      const textNode = document.createTextNode(text);
+      range.insertNode(textNode);
+      range.setStartAfter(textNode);
+      range.collapse(true);
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      target.dispatchEvent(createForcedInputEvent());
+      return true;
+    }
+
+    return false;
+  };
+
+  const forcePasteFromClipboard = async () => {
+    const target = forcePasteTarget;
+    if (!isForcePasteTarget(target)) {
+      showCopyToast('Focus a text field before opening the menu.');
+      return;
+    }
+    try {
+      const result = await runLocalCommand(CLIPBOARD_CMD, 1500);
+      const text = typeof result.stdout === 'string' ? result.stdout : '';
+      if (!text) {
+        showCopyToast('Clipboard empty.');
+        return;
+      }
+      if (!insertTextIntoField(target, text)) {
+        showCopyToast('That field is not supported.');
+        return;
+      }
+      setMenuOpen(false);
+      showCopyToast('Force pasted.');
+    } catch (err) {
+      showCopyToast('Clipboard fetch failed.');
+      console.warn('[userscript-utils] Force paste failed:', err);
+    }
+  };
 
   const openClipboardUrl = async (openInNewTab) => {
     try {
@@ -4623,6 +4743,14 @@ iframe {
       showCopyToast('Copied URL!');
       return;
     }
+    const isPrimaryMenuToggle = event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q';
+    const isSecondaryMenuToggle = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === '{' || event.key === '[');
+    if (isPrimaryMenuToggle || isSecondaryMenuToggle) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setMenuOpen(!menuEl || !menuEl.isConnected);
+      return;
+    }
     if (menuEl && menuEl.isConnected) {
       if (shouldIgnoreKeyEvent(event)) return;
       if (event.key === '1') {
@@ -4642,14 +4770,6 @@ iframe {
       }
     }
     if (shouldIgnoreKeyEvent(event)) return;
-    if (!event.altKey) return;
-    const key = event.key;
-    const isPrimary = !event.shiftKey && key && key.toLowerCase && key.toLowerCase() === 'q';
-    const isSecondary = event.shiftKey && (key === '{' || key === '[');
-    if (!isPrimary && !isSecondary) return;
-    if (shouldIgnoreKeyEvent(event)) return;
-    event.preventDefault();
-    setMenuOpen(!menuEl || !menuEl.isConnected);
   };
 
   const onKeyDownNav = (event) => {
@@ -4773,6 +4893,9 @@ iframe {
   setRightClickMode(RIGHT_CLICK_MODE_COPY);
   applyXSettings();
   installRedditMuteMode();
+  document.addEventListener('focusin', (event) => {
+    rememberForcePasteTarget(event.target);
+  }, true);
   document.addEventListener('keydown', onKeyDown, true);
   document.addEventListener('keydown', onKeyDownNav, true);
   document.addEventListener('keyup', onKeyUpNav, true);

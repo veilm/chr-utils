@@ -6,11 +6,12 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 
 ## Features
 
-- Alt+Q menu with a right-click logger (disabled, copy+log, save-to-list) plus link/image priority toggle
+- Alt+Q menu with a right-click logger (disabled, copy+log, save-to-list) plus link/image priority toggle; its mode, priority, and saved list persist per origin
 - Alt+Shift+Q opens a top-edge command hint for five seconds: `n` toggles an autosaved floating notepad on any page, `v` toggles Vimium Lite for the page, `l` copies every page link href, `i` makes right-click copy image addresses instead of enclosing link addresses, and `p` force-pastes the clipboard into the focused text, password, or editable field without emitting a blocked `paste` event (requires the local server); choosing a command dismisses the hint immediately
 - Alt+P replaces the current tab with the clipboard URL (via local server)
 - Alt+Shift+P opens the clipboard URL in a new tab (via local server)
 - Alt+Y copies the current page URL with a brief overlay confirmation
+- Utility-consumed shortcuts stop propagation and suppress their matching keyup so page bindings do not also act on them
 - Alt+Shift+A toggles a per-site dark mode; mode selection persists by host
 - Right-click list stored in local storage with copy/clear helpers
 - Instagram: periodically unblocks overlays above visible `<video>` elements so native controls remain clickable
@@ -21,6 +22,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
   - f to show clickable-element hints, including editable fields; text inputs/textareas are focused for typing
   - hint labels stay fixed-width per page; if any two-letter hints are needed, all hints become two letters
   - F to show clickable-element hints and open links in a new tab
+- Site-specific Alt+Q sections appear only on their matching sites: X settings on X/Twitter, YouTube video analysis on YouTube, and muted users on Reddit
 - X settings panel (persistent): hide selected left-nav entries, hide right sidebar, and hide Grok action buttons on posts
 - Reddit muted-users mode: mute directly beside any feed-post author, maintain a persistent Reddit-wide username list, and replace muted posts with compact placeholders that can unmute them in place
 - Dark mode presets: `Midnight` (direct recolor), `Invert` (full-page invert), and `Amber` (warm sepia-like recolor)

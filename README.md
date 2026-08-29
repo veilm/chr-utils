@@ -6,9 +6,8 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 
 ## Features
 
-- Alt+Q menu with force paste, a right-click logger (disabled, copy+log, save-to-list), and link/image priority toggle
-- Force paste inserts the clipboard into the last-focused text, password, or editable field without emitting a `paste` event, bypassing sites that cancel paste (requires the local server)
-- Alt+Shift+Q opens a top-edge command hint for five seconds: `n` toggles an autosaved floating notepad on any page, `v` toggles Vimium Lite for the page, `l` copies every page link href, and `i` makes right-click copy image addresses instead of enclosing link addresses; choosing a command dismisses the hint immediately
+- Alt+Q menu with a right-click logger (disabled, copy+log, save-to-list) plus link/image priority toggle
+- Alt+Shift+Q opens a top-edge command hint for five seconds: `n` toggles an autosaved floating notepad on any page, `v` toggles Vimium Lite for the page, `l` copies every page link href, `i` makes right-click copy image addresses instead of enclosing link addresses, and `p` force-pastes the clipboard into the focused text, password, or editable field without emitting a blocked `paste` event (requires the local server); choosing a command dismisses the hint immediately
 - Alt+P replaces the current tab with the clipboard URL (via local server)
 - Alt+Shift+P opens the clipboard URL in a new tab (via local server)
 - Alt+Y copies the current page URL with a brief overlay confirmation

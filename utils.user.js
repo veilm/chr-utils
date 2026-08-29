@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.1.8
+// @version      0.1.9
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -141,6 +141,7 @@ video::-webkit-media-controls-overlay-enclosure {
   const CLIPBOARD_CMD = 'clip -o';
   const TOGGLE_HINT = 'Alt+Q or Alt+Shift+[';
   const RIGHT_CLICK_LIST_KEY = 'userscript-utils:right-click-list';
+  const RIGHT_CLICK_MODE_KEY = 'userscript-utils:right-click-mode';
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
   const RIGHT_CLICK_PRIORITY_KEY = 'userscript-utils:right-click-priority';
   const LINK_MONITOR_REGEX_KEY = 'userscript-utils:link-monitor-regex-rows';
@@ -314,8 +315,8 @@ iframe {
   let rightClickPriority = RIGHT_CLICK_PRIORITY_LINK;
   let rightClickListenerAttached = false;
   let rightClickList = [];
-  let menuOpenedOnce = false;
   let forcePasteTarget = null;
+  const consumedUtilityKeyups = new Set();
   let vimiumLiteEnabled = true;
   let vimiumLiteButton = null;
   let ytVideoLastResults = [];
@@ -1095,6 +1096,19 @@ iframe {
     }
   };
 
+  const loadRightClickMode = () => {
+    try {
+      const raw = window.localStorage.getItem(RIGHT_CLICK_MODE_KEY);
+      if ([RIGHT_CLICK_MODE_DISABLED, RIGHT_CLICK_MODE_COPY, RIGHT_CLICK_MODE_LIST].includes(raw)) {
+        return raw;
+      }
+      return RIGHT_CLICK_MODE_COPY;
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load right-click mode:', err);
+      return RIGHT_CLICK_MODE_COPY;
+    }
+  };
+
   const loadVimiumLiteEnabled = () => {
     try {
       const raw = window.localStorage.getItem(VIMIUM_LITE_KEY);
@@ -1130,6 +1144,14 @@ iframe {
       window.localStorage.setItem(RIGHT_CLICK_PRIORITY_KEY, rightClickPriority);
     } catch (err) {
       console.warn('[userscript-utils] Failed to save right-click priority:', err);
+    }
+  };
+
+  const saveRightClickMode = () => {
+    try {
+      window.localStorage.setItem(RIGHT_CLICK_MODE_KEY, rightClickMode);
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save right-click mode:', err);
     }
   };
 
@@ -1387,6 +1409,15 @@ iframe {
     try {
       const host = window.location && window.location.hostname ? String(window.location.hostname) : '';
       return host === 'x.com' || host.endsWith('.x.com') || host === 'twitter.com' || host.endsWith('.twitter.com');
+    } catch {
+      return false;
+    }
+  };
+
+  const isYouTubeHost = () => {
+    try {
+      const host = String(window.location.hostname || '').toLowerCase();
+      return host === 'youtube.com' || host.endsWith('.youtube.com');
     } catch {
       return false;
     }
@@ -1939,6 +1970,7 @@ iframe {
   };
 
   rightClickList = loadRightClickList();
+  rightClickMode = loadRightClickMode();
   vimiumLiteEnabled = loadVimiumLiteEnabled();
   rightClickPriority = loadRightClickPriority();
   xSettings = loadXSettings();
@@ -2507,7 +2539,12 @@ iframe {
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, xSection, ytSection, linkMonitorSection, requestMonitorSection, redditMuteSection, footer);
+    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection);
+    if (isXHost()) panel.appendChild(xSection);
+    if (isYouTubeHost()) panel.appendChild(ytSection);
+    panel.append(linkMonitorSection, requestMonitorSection);
+    if (isRedditHost()) panel.appendChild(redditMuteSection);
+    panel.appendChild(footer);
     enableDraggablePanel(panel, header);
     menuEl = panel;
     updateRightClickModeButtons();
@@ -2524,10 +2561,6 @@ iframe {
       }
       if (!menuEl.isConnected) {
         document.body.appendChild(menuEl);
-      }
-      if (!menuOpenedOnce) {
-        menuOpenedOnce = true;
-        setRightClickMode(RIGHT_CLICK_MODE_DISABLED);
       }
     } else if (menuEl && menuEl.isConnected) {
       menuEl.remove();
@@ -2588,6 +2621,26 @@ iframe {
       .filter(Boolean);
     await copyTextToClipboard(links.join('\n'));
     showCopyToast(`Copied ${links.length} link${links.length === 1 ? '' : 's'}!`);
+  };
+
+  const getUtilityKeyToken = (event) => event.code || event.key || '';
+
+  const consumeUtilityKeyDown = (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    event.stopPropagation();
+    const token = getUtilityKeyToken(event);
+    if (token) consumedUtilityKeyups.add(token);
+  };
+
+  const consumeUtilityKeyUp = (event) => {
+    const token = getUtilityKeyToken(event);
+    if (!token || !consumedUtilityKeyups.has(token)) return false;
+    consumedUtilityKeyups.delete(token);
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    event.stopPropagation();
+    return true;
   };
 
   const dismissCommandHint = ({ clearTimer = true } = {}) => {
@@ -2654,8 +2707,7 @@ iframe {
     if (!commandPromptActive) return false;
     commandPromptActive = false;
     dismissCommandHint();
-    event.preventDefault();
-    event.stopImmediatePropagation();
+    consumeUtilityKeyDown(event);
 
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
     if (lowerKey === 'v') {
@@ -2923,11 +2975,7 @@ iframe {
   const handleLinkHintKeyDown = (event) => {
     if (!linkHintState) return false;
     if (event.altKey || event.ctrlKey || event.metaKey) return false;
-    const consume = () => {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      event.stopPropagation();
-    };
+    const consume = () => consumeUtilityKeyDown(event);
     if (event.key === 'Escape') {
       consume();
       teardownLinkHints();
@@ -4532,7 +4580,9 @@ iframe {
   };
 
   const setRightClickMode = (mode) => {
-    rightClickMode = mode;
+    rightClickMode = [RIGHT_CLICK_MODE_DISABLED, RIGHT_CLICK_MODE_COPY, RIGHT_CLICK_MODE_LIST].includes(mode)
+      ? mode
+      : RIGHT_CLICK_MODE_COPY;
     if (rightClickMode !== RIGHT_CLICK_MODE_DISABLED && !rightClickListenerAttached) {
       ensureStyle();
       document.addEventListener('contextmenu', rightClickHandler);
@@ -4543,6 +4593,7 @@ iframe {
       rightClickListenerAttached = false;
       console.log('%cRight-click logger disabled.', 'background: #111; color: #f87171; padding: 5px;');
     }
+    saveRightClickMode();
     updateRightClickModeButtons();
   };
 
@@ -4690,35 +4741,30 @@ iframe {
     if (handleCommandPromptKeyDown(event)) return;
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
     if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q') {
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      consumeUtilityKeyDown(event);
       rememberForcePasteTarget(event.target);
       enterCommandPrompt();
       return;
     }
     if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'a') {
       if (shouldIgnoreKeyEvent(event)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      consumeUtilityKeyDown(event);
       toggleDarkModeForSite();
       return;
     }
     if (event.ctrlKey && event.altKey && !event.metaKey && lowerKey === 'i') {
       if (shouldIgnoreKeyEvent(event)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      consumeUtilityKeyDown(event);
       toggleVimiumLite({ persist: false, feedback: true });
       return;
     }
     if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'p') {
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      consumeUtilityKeyDown(event);
       openClipboardUrl(Boolean(event.shiftKey));
       return;
     }
     if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'y') {
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      consumeUtilityKeyDown(event);
       copyTextToClipboard(window.location.href || '');
       showCopyToast('Copied URL!');
       return;
@@ -4726,17 +4772,17 @@ iframe {
     if (menuEl && menuEl.isConnected) {
       if (shouldIgnoreKeyEvent(event)) return;
       if (event.key === '1') {
-        event.preventDefault();
+        consumeUtilityKeyDown(event);
         setRightClickMode(RIGHT_CLICK_MODE_DISABLED);
         return;
       }
       if (event.key === '2') {
-        event.preventDefault();
+        consumeUtilityKeyDown(event);
         setRightClickMode(RIGHT_CLICK_MODE_COPY);
         return;
       }
       if (event.key === '3') {
-        event.preventDefault();
+        consumeUtilityKeyDown(event);
         setRightClickMode(RIGHT_CLICK_MODE_LIST);
         return;
       }
@@ -4745,8 +4791,7 @@ iframe {
     const isPrimaryMenuToggle = event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q';
     const isSecondaryMenuToggle = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === '{' || event.key === '[');
     if (isPrimaryMenuToggle || isSecondaryMenuToggle) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      consumeUtilityKeyDown(event);
       setMenuOpen(!menuEl || !menuEl.isConnected);
     }
   };
@@ -4760,11 +4805,7 @@ iframe {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (menuEl && menuEl.isConnected) return;
     if (!vimiumLiteEnabled) return;
-    const consumeNavEvent = () => {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      event.stopPropagation();
-    };
+    const consumeNavEvent = () => consumeUtilityKeyDown(event);
 
     const key = event.key;
     if (event.repeat) {
@@ -4842,6 +4883,7 @@ iframe {
   };
 
   const onKeyUpNav = (event) => {
+    consumeUtilityKeyUp(event);
     if (linkHintState) {
       const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
       if (lowerKey && LINK_HINT_ALPHABET.includes(lowerKey)) {
@@ -4869,7 +4911,7 @@ iframe {
     }
   };
 
-  setRightClickMode(RIGHT_CLICK_MODE_COPY);
+  setRightClickMode(rightClickMode);
   applyXSettings();
   installRedditMuteMode();
   document.addEventListener('focusin', (event) => {
@@ -4883,6 +4925,7 @@ iframe {
   }, true);
   window.addEventListener('blur', stopScroll);
   window.addEventListener('blur', teardownLinkHints);
+  window.addEventListener('blur', () => consumedUtilityKeyups.clear());
   installClaudeFloatingComposer();
 
   const runImageHostAudit = () => {

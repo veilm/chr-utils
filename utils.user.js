@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.1.7
+// @version      0.1.8
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -2242,14 +2242,6 @@ iframe {
     return el instanceof HTMLElement && el.isContentEditable;
   };
 
-  const getDeepActiveElement = () => {
-    let active = document.activeElement;
-    while (active && active.shadowRoot && active.shadowRoot.activeElement) {
-      active = active.shadowRoot.activeElement;
-    }
-    return active;
-  };
-
   const rememberForcePasteTarget = (candidate) => {
     if (isForcePasteTarget(candidate) && !(menuEl && menuEl.contains(candidate))) {
       forcePasteTarget = candidate;
@@ -2277,19 +2269,6 @@ iframe {
     closeBtn.addEventListener('click', () => setMenuOpen(false));
 
     header.append(title, closeBtn);
-
-    const forcePasteSection = document.createElement('div');
-    forcePasteSection.className = 'utils-section';
-    const forcePasteTitle = document.createElement('h3');
-    forcePasteTitle.textContent = 'Force Paste';
-    const forcePasteBtn = document.createElement('button');
-    forcePasteBtn.type = 'button';
-    forcePasteBtn.className = 'utils-btn';
-    forcePasteBtn.textContent = 'Paste clipboard into last field';
-    forcePasteBtn.addEventListener('click', () => forcePasteFromClipboard());
-    const forcePasteDesc = document.createElement('p');
-    forcePasteDesc.textContent = 'Focus a text or password field before opening this menu. Inserts without firing a paste event, bypassing sites that block paste.';
-    forcePasteSection.append(forcePasteTitle, forcePasteBtn, forcePasteDesc);
 
     const auditSection = document.createElement('div');
     auditSection.className = 'utils-section';
@@ -2528,7 +2507,7 @@ iframe {
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, forcePasteSection, rightClickSection, navSection, darkModeSection, auditSection, xSection, ytSection, linkMonitorSection, requestMonitorSection, redditMuteSection, footer);
+    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, xSection, ytSection, linkMonitorSection, requestMonitorSection, redditMuteSection, footer);
     enableDraggablePanel(panel, header);
     menuEl = panel;
     updateRightClickModeButtons();
@@ -2540,7 +2519,6 @@ iframe {
 
   const setMenuOpen = (open) => {
     if (open) {
-      rememberForcePasteTarget(getDeepActiveElement());
       if (!menuEl) {
         menuEl = buildMenu();
       }
@@ -2643,6 +2621,7 @@ iframe {
       ['V', 'Vimium Lite'],
       ['L', 'Copy links'],
       ['I', 'Image right-click'],
+      ['P', 'Force paste'],
       ['Esc', 'Cancel']
     ]) {
       const item = document.createElement('span');
@@ -2695,6 +2674,10 @@ iframe {
     }
     if (lowerKey === 'n') {
       toggleFloatingComposer();
+      return true;
+    }
+    if (lowerKey === 'p') {
+      forcePasteFromClipboard();
       return true;
     }
     if (lowerKey === 'escape') {
@@ -4707,12 +4690,9 @@ iframe {
     if (handleCommandPromptKeyDown(event)) return;
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
     if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q') {
-      const fromFloatingComposer = event.target && event.target.closest
-        ? event.target.closest(`#${CLAUDE_COMPOSER_ID}`)
-        : null;
-      if (shouldIgnoreKeyEvent(event) && !fromFloatingComposer) return;
       event.preventDefault();
       event.stopImmediatePropagation();
+      rememberForcePasteTarget(event.target);
       enterCommandPrompt();
       return;
     }
@@ -4743,14 +4723,6 @@ iframe {
       showCopyToast('Copied URL!');
       return;
     }
-    const isPrimaryMenuToggle = event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q';
-    const isSecondaryMenuToggle = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === '{' || event.key === '[');
-    if (isPrimaryMenuToggle || isSecondaryMenuToggle) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      setMenuOpen(!menuEl || !menuEl.isConnected);
-      return;
-    }
     if (menuEl && menuEl.isConnected) {
       if (shouldIgnoreKeyEvent(event)) return;
       if (event.key === '1') {
@@ -4770,6 +4742,13 @@ iframe {
       }
     }
     if (shouldIgnoreKeyEvent(event)) return;
+    const isPrimaryMenuToggle = event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q';
+    const isSecondaryMenuToggle = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === '{' || event.key === '[');
+    if (isPrimaryMenuToggle || isSecondaryMenuToggle) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setMenuOpen(!menuEl || !menuEl.isConnected);
+    }
   };
 
   const onKeyDownNav = (event) => {

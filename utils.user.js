@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.2.1
+// @version      0.3.0
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -146,6 +146,11 @@ video::-webkit-media-controls-overlay-enclosure {
   const RIGHT_CLICK_PRIORITY_KEY = 'userscript-utils:right-click-priority';
   const MEDIA_MANAGER_POLICIES_KEY = 'userscript-utils:media-manager-policies:v1';
   const WORKSPACE_STATE_KEY = 'userscript-utils:workspace-state:v1';
+  const PAGE_NOTES_KEY = 'userscript-utils:page-notes:v1';
+  const PAGE_NOTE_STYLE_ID = 'userscript-utils-page-note-style';
+  const PAGE_NOTE_ALERT_ID = 'userscript-utils-page-note-alert';
+  const PAGE_NOTE_EFFECT_ID = 'userscript-utils-page-note-effect';
+  const PAGE_NOTE_EDITOR_ID = 'userscript-utils-page-note-editor';
   const WORKSPACE_PANEL_IDS = Object.freeze({
     menu: 'utils-menu',
     mediaManager: 'media-manager',
@@ -341,6 +346,12 @@ iframe {
   let darkModeSiteMap = {};
   let currentDarkMode = DARK_MODE_OFF;
   let workspaceStateCache = null;
+  let pageNotes = [];
+  let pageNotesMenuStatusEl = null;
+  let pageNoteDismissedUrl = null;
+  let pageNoteAlertCleanup = null;
+  let pageNoteEditorCleanup = null;
+  let pageNoteRenderTimer = null;
   let lastDarkMode = DEFAULT_DARK_MODE;
   let scrollDirection = 0;
   let scrollMultiplier = 1;
@@ -1174,6 +1185,62 @@ iframe {
     }
   };
 
+  const normalizePageNote = (value) => {
+    if (!value || typeof value !== 'object') return null;
+    const type = value.type === 'prefix' ? 'prefix' : 'exact';
+    const match = typeof value.match === 'string' ? value.match.trim() : '';
+    const text = typeof value.text === 'string' ? value.text.trim() : '';
+    if (!match || !text) return null;
+    return {
+      id: typeof value.id === 'string' && value.id ? value.id : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      type,
+      match,
+      text,
+      createdAt: Number.isFinite(value.createdAt) ? value.createdAt : Math.floor(Date.now() / 1000),
+      updatedAt: Number.isFinite(value.updatedAt) ? value.updatedAt : Math.floor(Date.now() / 1000)
+    };
+  };
+
+  const loadPageNotes = () => {
+    try {
+      const stored = typeof GM_getValue === 'function'
+        ? GM_getValue(PAGE_NOTES_KEY, [])
+        : JSON.parse(window.localStorage.getItem(PAGE_NOTES_KEY) || '[]');
+      if (!Array.isArray(stored)) return [];
+      return stored.map(normalizePageNote).filter(Boolean);
+    } catch (err) {
+      console.warn('[page-notes] Failed to load notes:', err);
+      return [];
+    }
+  };
+
+  const savePageNotes = () => {
+    try {
+      if (typeof GM_setValue === 'function') GM_setValue(PAGE_NOTES_KEY, pageNotes);
+      else window.localStorage.setItem(PAGE_NOTES_KEY, JSON.stringify(pageNotes));
+    } catch (err) {
+      console.warn('[page-notes] Failed to save notes:', err);
+    }
+  };
+
+  const getMatchingPageNotes = (url = window.location.href) => pageNotes
+    .filter((note) => note.type === 'exact' ? url === note.match : url.startsWith(note.match))
+    .sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'exact' ? -1 : 1;
+      if (a.type === 'prefix' && a.match.length !== b.match.length) return b.match.length - a.match.length;
+      return b.updatedAt - a.updatedAt;
+    });
+
+  const getExactPageNote = (url = window.location.href) => pageNotes.find((note) => note.type === 'exact' && note.match === url) || null;
+
+  const updatePageNotesMenuStatus = () => {
+    if (!pageNotesMenuStatusEl) return;
+    const matches = getMatchingPageNotes();
+    pageNotesMenuStatusEl.textContent = matches.length
+      ? `${matches.length} saved note${matches.length === 1 ? '' : 's'} match this page.`
+      : 'No saved notes match this page.';
+  };
+
   const normalizeRedditUsername = (value) => String(value || '')
     .trim()
     .replace(/^\/?u\//i, '')
@@ -1916,7 +1983,7 @@ iframe {
       saveClaudeComposerLayout(layout);
     };
     updateToggle();
-    enableDraggablePanel(panel, header, { workspaceId: WORKSPACE_PANEL_IDS.menu });
+    enableDraggablePanel(panel, header);
     header.addEventListener('pointerup', () => window.setTimeout(saveLayout, 0));
     toggle.addEventListener('click', () => {
       panel.classList.toggle('collapsed');
@@ -2039,6 +2106,7 @@ iframe {
 
   rightClickList = loadRightClickList();
   rightClickMode = loadRightClickMode();
+  pageNotes = loadPageNotes();
   vimiumLiteEnabled = loadVimiumLiteEnabled();
   rightClickPriority = loadRightClickPriority();
   xSettings = loadXSettings();
@@ -2381,6 +2449,19 @@ iframe {
     auditBtn.addEventListener('click', () => runMediaManager());
     auditSection.append(auditTitle, auditBtn);
 
+    const pageNotesSection = document.createElement('div');
+    pageNotesSection.className = 'utils-section';
+    const pageNotesTitle = document.createElement('h3');
+    pageNotesTitle.textContent = 'Page Notes';
+    const pageNotesBtn = document.createElement('button');
+    pageNotesBtn.type = 'button';
+    pageNotesBtn.className = 'utils-btn';
+    pageNotesBtn.textContent = 'Add or edit page note';
+    pageNotesBtn.addEventListener('click', () => openPageNoteEditor(getExactPageNote()));
+    pageNotesMenuStatusEl = document.createElement('p');
+    pageNotesSection.append(pageNotesTitle, pageNotesBtn, pageNotesMenuStatusEl);
+    updatePageNotesMenuStatus();
+
     const rightClickSection = document.createElement('div');
     rightClickSection.className = 'utils-section';
     const rightClickTitle = document.createElement('h3');
@@ -2607,13 +2688,13 @@ iframe {
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection);
+    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, pageNotesSection);
     if (isXHost()) panel.appendChild(xSection);
     if (isYouTubeHost()) panel.appendChild(ytSection);
     panel.append(linkMonitorSection, requestMonitorSection);
     if (isRedditHost()) panel.appendChild(redditMuteSection);
     panel.appendChild(footer);
-    enableDraggablePanel(panel, header);
+    enableDraggablePanel(panel, header, { workspaceId: WORKSPACE_PANEL_IDS.menu });
     menuEl = panel;
     updateRightClickModeButtons();
     updateRightClickPriorityButtons();
@@ -2744,6 +2825,7 @@ iframe {
       ['L', 'Copy links'],
       ['I', 'Image right-click'],
       ['P', 'Force paste'],
+      ['M', 'Mark page'],
       ['Esc', 'Cancel']
     ]) {
       const item = document.createElement('span');
@@ -2799,6 +2881,10 @@ iframe {
     }
     if (lowerKey === 'p') {
       forcePasteFromClipboard();
+      return true;
+    }
+    if (lowerKey === 'm') {
+      openPageNoteEditor(getExactPageNote());
       return true;
     }
     if (lowerKey === 'escape') {
@@ -3206,6 +3292,401 @@ iframe {
       showCopyToast('Clipboard fetch failed.');
       console.warn('[userscript-utils] Force paste failed:', err);
     }
+  };
+
+  const ensurePageNoteStyle = () => {
+    if (document.getElementById(PAGE_NOTE_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = PAGE_NOTE_STYLE_ID;
+    style.textContent = `
+      #${PAGE_NOTE_EFFECT_ID} {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        overflow: hidden;
+        z-index: 2147483645;
+        border: 4px solid rgba(251, 191, 36, 0.88);
+        box-shadow: inset 0 0 28px rgba(251, 191, 36, 0.38);
+        box-sizing: border-box;
+        animation: page-note-border-pulse 1.35s ease-in-out infinite alternate;
+      }
+      #${PAGE_NOTE_EFFECT_ID}::before,
+      #${PAGE_NOTE_EFFECT_ID}::after {
+        content: '';
+        position: absolute;
+        top: -80%;
+        left: -38%;
+        width: 18vw;
+        min-width: 130px;
+        height: 260%;
+        transform: rotate(24deg);
+        background: repeating-linear-gradient(
+          90deg,
+          rgba(251, 191, 36, 0) 0 18px,
+          rgba(251, 191, 36, 0.44) 18px 24px,
+          rgba(255, 255, 255, 0.5) 24px 27px,
+          rgba(251, 191, 36, 0) 27px 48px
+        );
+        filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.75));
+        animation: page-note-sweep 2.7s ease-in-out 3;
+      }
+      #${PAGE_NOTE_EFFECT_ID}::after {
+        left: auto;
+        right: -38%;
+        animation-delay: 0.42s;
+        animation-direction: reverse;
+      }
+      #${PAGE_NOTE_ALERT_ID},
+      #${PAGE_NOTE_EDITOR_ID} {
+        position: fixed;
+        top: 18px;
+        left: 18px;
+        width: min(430px, calc(100vw - 36px));
+        max-height: calc(100vh - 36px);
+        overflow: auto;
+        z-index: 2147483647;
+        box-sizing: border-box;
+        padding: 13px 14px 14px;
+        border: 2px solid rgba(251, 191, 36, 0.9);
+        background: rgba(18, 14, 8, 0.98);
+        color: #fff7df;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65), 0 0 22px rgba(251, 191, 36, 0.32);
+        font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+      #${PAGE_NOTE_ALERT_ID} .page-note-header,
+      #${PAGE_NOTE_EDITOR_ID} .page-note-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 9px;
+        cursor: grab;
+        user-select: none;
+      }
+      #${PAGE_NOTE_ALERT_ID} .page-note-title,
+      #${PAGE_NOTE_EDITOR_ID} .page-note-title {
+        font-size: 16px;
+        font-weight: 750;
+        color: #fde68a;
+      }
+      #${PAGE_NOTE_ALERT_ID} button,
+      #${PAGE_NOTE_EDITOR_ID} button {
+        cursor: pointer;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 0;
+        padding: 5px 9px;
+        background: #332717;
+        color: #fff7df;
+        font: inherit;
+        font-weight: 650;
+      }
+      #${PAGE_NOTE_ALERT_ID} .page-note-close,
+      #${PAGE_NOTE_EDITOR_ID} .page-note-close {
+        border: 0;
+        background: transparent;
+        color: #f87171;
+        padding: 0;
+        font-size: 20px;
+        line-height: 1;
+      }
+      #${PAGE_NOTE_ALERT_ID} .page-note-entry {
+        padding: 9px;
+        margin-top: 8px;
+        border: 1px solid rgba(251, 191, 36, 0.24);
+        background: rgba(255, 255, 255, 0.045);
+      }
+      #${PAGE_NOTE_ALERT_ID} .page-note-text {
+        margin: 5px 0 8px;
+        white-space: pre-wrap;
+        font-size: 15px;
+        font-weight: 650;
+      }
+      #${PAGE_NOTE_ALERT_ID} .page-note-rule {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #c8b98f;
+        font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+      #${PAGE_NOTE_ALERT_ID} .page-note-actions,
+      #${PAGE_NOTE_EDITOR_ID} .page-note-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      #${PAGE_NOTE_EDITOR_ID} label {
+        display: block;
+        margin: 8px 0 4px;
+        color: #d8cba8;
+        font-weight: 650;
+      }
+      #${PAGE_NOTE_EDITOR_ID} textarea,
+      #${PAGE_NOTE_EDITOR_ID} input,
+      #${PAGE_NOTE_EDITOR_ID} select {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 0;
+        padding: 7px 8px;
+        background: #0d0b08;
+        color: #fff7df;
+        font: inherit;
+      }
+      #${PAGE_NOTE_EDITOR_ID} textarea {
+        min-height: 66px;
+        resize: vertical;
+      }
+      #${PAGE_NOTE_EDITOR_ID} .page-note-help {
+        margin-top: 5px;
+        color: #aa9d7d;
+        font-size: 11px;
+      }
+      @keyframes page-note-sweep {
+        0% { transform: translateX(0) rotate(24deg); opacity: 0; }
+        12% { opacity: 1; }
+        88% { opacity: 1; }
+        100% { transform: translateX(720vw) rotate(24deg); opacity: 0; }
+      }
+      @keyframes page-note-border-pulse {
+        from { border-color: rgba(251, 191, 36, 0.58); box-shadow: inset 0 0 14px rgba(251, 191, 36, 0.2); }
+        to { border-color: rgba(255, 255, 255, 0.96); box-shadow: inset 0 0 34px rgba(251, 191, 36, 0.48); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #${PAGE_NOTE_EFFECT_ID},
+        #${PAGE_NOTE_EFFECT_ID}::before,
+        #${PAGE_NOTE_EFFECT_ID}::after { animation: none !important; }
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  };
+
+  const removePageNoteAlertVisuals = () => {
+    if (typeof pageNoteAlertCleanup === 'function') pageNoteAlertCleanup();
+    pageNoteAlertCleanup = null;
+    document.getElementById(PAGE_NOTE_ALERT_ID)?.remove();
+    document.getElementById(PAGE_NOTE_EFFECT_ID)?.remove();
+  };
+
+  const schedulePageNoteAlert = (delayMs = 450) => {
+    if (pageNoteRenderTimer !== null) window.clearTimeout(pageNoteRenderTimer);
+    pageNoteRenderTimer = window.setTimeout(() => {
+      pageNoteRenderTimer = null;
+      renderPageNoteAlert();
+    }, delayMs);
+  };
+
+  const closePageNoteEditor = ({ restoreAlert = true } = {}) => {
+    if (typeof pageNoteEditorCleanup === 'function') pageNoteEditorCleanup();
+    pageNoteEditorCleanup = null;
+    document.getElementById(PAGE_NOTE_EDITOR_ID)?.remove();
+    if (restoreAlert) window.setTimeout(() => renderPageNoteAlert(), 0);
+  };
+
+  const removePageNote = (note, { confirmDelete = true } = {}) => {
+    if (!note) return false;
+    if (confirmDelete && !window.confirm(`Delete this saved page note?\n\n${note.text}`)) return false;
+    const previousLength = pageNotes.length;
+    pageNotes = pageNotes.filter((item) => item.id !== note.id);
+    if (pageNotes.length === previousLength) return false;
+    savePageNotes();
+    pageNoteDismissedUrl = null;
+    updatePageNotesMenuStatus();
+    renderPageNoteAlert({ force: true });
+    return true;
+  };
+
+  const renderPageNoteAlert = ({ force = false } = {}) => {
+    if (!document.body) return;
+    removePageNoteAlertVisuals();
+    updatePageNotesMenuStatus();
+    const matches = getMatchingPageNotes();
+    if (!matches.length) return;
+    if (!force && pageNoteDismissedUrl === window.location.href) return;
+    ensurePageNoteStyle();
+
+    const effect = document.createElement('div');
+    effect.id = PAGE_NOTE_EFFECT_ID;
+    effect.setAttribute('aria-hidden', 'true');
+
+    const alert = document.createElement('div');
+    alert.id = PAGE_NOTE_ALERT_ID;
+    alert.setAttribute('role', 'alert');
+    const header = document.createElement('div');
+    header.className = 'page-note-header';
+    const title = document.createElement('div');
+    title.className = 'page-note-title';
+    title.textContent = matches.length === 1 ? 'This page has a saved note' : `This page has ${matches.length} saved notes`;
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'page-note-close';
+    closeButton.textContent = '\u2715';
+    closeButton.title = 'Dismiss this alert for the current page load';
+    closeButton.addEventListener('click', () => {
+      pageNoteDismissedUrl = window.location.href;
+      removePageNoteAlertVisuals();
+    });
+    header.append(title, closeButton);
+    alert.appendChild(header);
+
+    matches.forEach((note) => {
+      const entry = document.createElement('div');
+      entry.className = 'page-note-entry';
+      const scope = document.createElement('div');
+      scope.textContent = note.type === 'exact' ? 'Exact URL note' : 'URL prefix note';
+      scope.style.color = '#fde68a';
+      scope.style.fontWeight = '700';
+      const text = document.createElement('div');
+      text.className = 'page-note-text';
+      text.textContent = note.text;
+      const rule = document.createElement('div');
+      rule.className = 'page-note-rule';
+      rule.textContent = note.match;
+      rule.title = note.match;
+      const actions = document.createElement('div');
+      actions.className = 'page-note-actions';
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.textContent = 'Edit';
+      editButton.addEventListener('click', () => openPageNoteEditor(note));
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.textContent = 'Delete';
+      deleteButton.addEventListener('click', () => removePageNote(note));
+      actions.append(editButton, deleteButton);
+      entry.append(scope, text, rule, actions);
+      alert.appendChild(entry);
+    });
+
+    document.body.append(effect, alert);
+    pageNoteAlertCleanup = enableDraggablePanel(alert, header);
+  };
+
+  const openPageNoteEditor = (note = null) => {
+    if (!document.body) return;
+    closePageNoteEditor({ restoreAlert: false });
+    removePageNoteAlertVisuals();
+    ensurePageNoteStyle();
+
+    const editor = document.createElement('div');
+    editor.id = PAGE_NOTE_EDITOR_ID;
+    const header = document.createElement('div');
+    header.className = 'page-note-header';
+    const title = document.createElement('div');
+    title.className = 'page-note-title';
+    title.textContent = note ? 'Edit page note' : 'Mark this page';
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'page-note-close';
+    closeButton.textContent = '\u2715';
+    closeButton.addEventListener('click', () => closePageNoteEditor());
+    header.append(title, closeButton);
+
+    const noteLabel = document.createElement('label');
+    noteLabel.textContent = 'Note';
+    const textInput = document.createElement('textarea');
+    textInput.placeholder = 'Done';
+    textInput.value = note ? note.text : '';
+
+    const typeLabel = document.createElement('label');
+    typeLabel.textContent = 'Scope';
+    const typeSelect = document.createElement('select');
+    for (const [value, label] of [['exact', 'Exact URL'], ['prefix', 'URL prefix']]) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      typeSelect.appendChild(option);
+    }
+    typeSelect.value = note ? note.type : 'exact';
+
+    const matchLabel = document.createElement('label');
+    matchLabel.textContent = 'Match';
+    const matchInput = document.createElement('input');
+    matchInput.type = 'text';
+    matchInput.value = note ? note.match : window.location.href;
+    const help = document.createElement('div');
+    help.className = 'page-note-help';
+    help.textContent = 'Enter saves. Shift+Enter inserts a newline. Prefix matching is a literal starts-with rule.';
+
+    const actions = document.createElement('div');
+    actions.className = 'page-note-actions';
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.textContent = 'Save note';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = 'Cancel';
+    cancelButton.addEventListener('click', () => closePageNoteEditor());
+    actions.append(saveButton, cancelButton);
+    if (note) {
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.textContent = 'Delete note';
+      deleteButton.addEventListener('click', () => {
+        if (!removePageNote(note)) return;
+        closePageNoteEditor({ restoreAlert: false });
+      });
+      actions.appendChild(deleteButton);
+    }
+
+    const saveEditorNote = () => {
+      const text = textInput.value.trim();
+      const type = typeSelect.value === 'prefix' ? 'prefix' : 'exact';
+      const match = matchInput.value.trim();
+      if (!text) {
+        showCopyToast('Note text is required.');
+        textInput.focus();
+        return;
+      }
+      if (!match) {
+        showCopyToast('A URL match is required.');
+        matchInput.focus();
+        return;
+      }
+      const now = Math.floor(Date.now() / 1000);
+      let existing = note ? pageNotes.find((item) => item.id === note.id) : null;
+      if (!existing) existing = pageNotes.find((item) => item.type === type && item.match === match) || null;
+      if (existing) {
+        existing.type = type;
+        existing.match = match;
+        existing.text = text;
+        existing.updatedAt = now;
+      } else {
+        pageNotes.push({
+          id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          type,
+          match,
+          text,
+          createdAt: now,
+          updatedAt: now
+        });
+      }
+      savePageNotes();
+      pageNoteDismissedUrl = null;
+      closePageNoteEditor({ restoreAlert: false });
+      updatePageNotesMenuStatus();
+      renderPageNoteAlert({ force: true });
+      showCopyToast('Page note saved.');
+    };
+
+    saveButton.addEventListener('click', saveEditorNote);
+    textInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        saveEditorNote();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closePageNoteEditor();
+      }
+    });
+
+    editor.append(header, noteLabel, textInput, typeLabel, typeSelect, matchLabel, matchInput, help, actions);
+    document.body.appendChild(editor);
+    pageNoteEditorCleanup = enableDraggablePanel(editor, header);
+    window.setTimeout(() => textInput.focus(), 0);
   };
 
   const openClipboardUrl = async (openInNewTab) => {
@@ -6022,6 +6503,10 @@ iframe {
     const nextUrl = window.location.href;
     if (nextUrl === lastWorkspaceUrl) return;
     lastWorkspaceUrl = nextUrl;
+    pageNoteDismissedUrl = null;
+    closePageNoteEditor({ restoreAlert: false });
+    removePageNoteAlertVisuals();
+    updatePageNotesMenuStatus();
     const desiredOpenPanels = { ...loadWorkspaceState().open };
     setMenuOpen(false, { remember: false });
     closeXSettingsPanel({ remember: false });
@@ -6034,13 +6519,21 @@ iframe {
     loadWorkspaceState().open = desiredOpenPanels;
     saveWorkspaceState();
     scheduleWorkspaceRestore(450);
+    schedulePageNoteAlert(500);
   };
 
   window.setInterval(handleWorkspaceRouteChange, 300);
-  window.addEventListener('pageshow', () => scheduleWorkspaceRestore(350));
+  window.addEventListener('pageshow', () => {
+    scheduleWorkspaceRestore(350);
+    schedulePageNoteAlert(400);
+  });
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => scheduleWorkspaceRestore(350), { once: true });
+    document.addEventListener('DOMContentLoaded', () => {
+      scheduleWorkspaceRestore(350);
+      schedulePageNoteAlert(400);
+    }, { once: true });
   } else {
     scheduleWorkspaceRestore(350);
+    schedulePageNoteAlert(400);
   }
 })();

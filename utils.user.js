@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.3.3
+// @version      0.3.4
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -2888,7 +2888,7 @@ iframe {
       return true;
     }
     if (lowerKey === 'm') {
-      openPageNoteEditor(getExactPageNote());
+      markOrEditCurrentPage();
       return true;
     }
     if (lowerKey === 'escape') {
@@ -3541,6 +3541,30 @@ iframe {
 
     document.body.append(effect, alert);
     pageNoteAlertCleanup = enableDraggablePanel(alert, header);
+  };
+
+  const markOrEditCurrentPage = () => {
+    const existing = getExactPageNote();
+    if (existing) {
+      openPageNoteEditor(existing);
+      return;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    pageNotes.push({
+      id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      type: 'exact',
+      match: window.location.href,
+      text: 'done',
+      createdAt: now,
+      updatedAt: now
+    });
+    savePageNotes();
+    pageNoteDismissedUrl = null;
+    updatePageNotesMenuStatus();
+    renderPageNoteAlert({ force: true });
+    showCopyToast('Page marked done.');
   };
 
   const openPageNoteEditor = (note = null) => {

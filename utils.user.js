@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.3.2
+// @version      0.3.3
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -10,6 +10,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_addValueChangeListener
 // @connect      127.0.0.1
 // ==/UserScript==
 
@@ -147,6 +148,7 @@ video::-webkit-media-controls-overlay-enclosure {
   const MEDIA_MANAGER_POLICIES_KEY = 'userscript-utils:media-manager-policies:v1';
   const WORKSPACE_STATE_KEY = 'userscript-utils:workspace-state:v1';
   const PAGE_NOTES_KEY = 'userscript-utils:page-notes:v1';
+  const PAGE_NOTES_CHANNEL_NAME = 'userscript-utils:page-notes-sync:v1';
   const PAGE_NOTE_STYLE_ID = 'userscript-utils-page-note-style';
   const PAGE_NOTE_ALERT_ID = 'userscript-utils-page-note-alert';
   const PAGE_NOTE_EFFECT_ID = 'userscript-utils-page-note-effect';
@@ -347,6 +349,7 @@ iframe {
   let currentDarkMode = DARK_MODE_OFF;
   let workspaceStateCache = null;
   let pageNotes = [];
+  let pageNotesChannel = null;
   let pageNotesMenuStatusEl = null;
   let pageNoteDismissedUrl = null;
   let pageNoteAlertCleanup = null;
@@ -1218,6 +1221,7 @@ iframe {
     try {
       if (typeof GM_setValue === 'function') GM_setValue(PAGE_NOTES_KEY, pageNotes);
       else window.localStorage.setItem(PAGE_NOTES_KEY, JSON.stringify(pageNotes));
+      if (pageNotesChannel) pageNotesChannel.postMessage(pageNotes);
     } catch (err) {
       console.warn('[page-notes] Failed to save notes:', err);
     }
@@ -6453,6 +6457,45 @@ iframe {
   let workspaceRestoreTimer = null;
   let lastWorkspaceUrl = window.location.href;
 
+  const applySyncedPageNotes = (stored) => {
+    const nextNotes = Array.isArray(stored) ? stored.map(normalizePageNote).filter(Boolean) : [];
+    if (JSON.stringify(nextNotes) === JSON.stringify(pageNotes)) return;
+    const previousMatches = JSON.stringify(getMatchingPageNotes());
+    pageNotes = nextNotes;
+    updatePageNotesMenuStatus();
+    if (JSON.stringify(getMatchingPageNotes()) === previousMatches) return;
+    pageNoteDismissedUrl = null;
+    if (!document.getElementById(PAGE_NOTE_EDITOR_ID)) renderPageNoteAlert({ force: true });
+  };
+
+  const installPageNotesSync = () => {
+    if (typeof GM_addValueChangeListener === 'function') {
+      try {
+        GM_addValueChangeListener(PAGE_NOTES_KEY, (_key, _oldValue, newValue, remote) => {
+          if (remote) applySyncedPageNotes(newValue);
+        });
+      } catch (err) {
+        console.warn('[page-notes] Failed to watch userscript storage:', err);
+      }
+    }
+    if (typeof BroadcastChannel === 'function') {
+      try {
+        pageNotesChannel = new BroadcastChannel(PAGE_NOTES_CHANNEL_NAME);
+        pageNotesChannel.addEventListener('message', (event) => applySyncedPageNotes(event.data));
+      } catch (err) {
+        console.warn('[page-notes] Failed to open the cross-tab channel:', err);
+      }
+    }
+    window.addEventListener('storage', (event) => {
+      if (event.key !== PAGE_NOTES_KEY || typeof event.newValue !== 'string') return;
+      try {
+        applySyncedPageNotes(JSON.parse(event.newValue));
+      } catch (err) {
+        console.warn('[page-notes] Failed to read a cross-tab storage update:', err);
+      }
+    });
+  };
+
   const restoreWorkspacePanels = () => {
     if (!document.body) return;
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.menu)) setMenuOpen(true, { remember: false });
@@ -6494,6 +6537,7 @@ iframe {
     schedulePageNoteAlert(500);
   };
 
+  installPageNotesSync();
   window.setInterval(handleWorkspaceRouteChange, 300);
   window.addEventListener('pageshow', () => {
     scheduleWorkspaceRestore(350);

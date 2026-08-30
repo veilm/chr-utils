@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.3.1
+// @version      0.3.2
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -3562,7 +3562,7 @@ iframe {
     const noteLabel = document.createElement('label');
     noteLabel.textContent = 'Note';
     const textInput = document.createElement('textarea');
-    textInput.placeholder = 'Done';
+    textInput.placeholder = 'done';
     textInput.value = note ? note.text : '';
 
     const typeLabel = document.createElement('label');
@@ -3583,7 +3583,7 @@ iframe {
     matchInput.value = note ? note.match : window.location.href;
     const help = document.createElement('div');
     help.className = 'page-note-help';
-    help.textContent = 'Enter saves. Shift+Enter inserts a newline. Prefix matching is a literal starts-with rule.';
+    help.textContent = 'Enter saves. An empty note saves as “done”. Shift+Enter inserts a newline. Prefix matching is a literal starts-with rule.';
 
     const actions = document.createElement('div');
     actions.className = 'page-note-actions';
@@ -3607,14 +3607,9 @@ iframe {
     }
 
     const saveEditorNote = () => {
-      const text = textInput.value.trim();
+      const text = textInput.value.trim() || textInput.placeholder;
       const type = typeSelect.value === 'prefix' ? 'prefix' : 'exact';
       const match = matchInput.value.trim();
-      if (!text) {
-        showCopyToast('Note text is required.');
-        textInput.focus();
-        return;
-      }
       if (!match) {
         showCopyToast('A URL match is required.');
         matchInput.focus();

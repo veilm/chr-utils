@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.1.9
+// @version      0.2.0
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -144,6 +144,7 @@ video::-webkit-media-controls-overlay-enclosure {
   const RIGHT_CLICK_MODE_KEY = 'userscript-utils:right-click-mode';
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
   const RIGHT_CLICK_PRIORITY_KEY = 'userscript-utils:right-click-priority';
+  const MEDIA_MANAGER_POLICIES_KEY = 'userscript-utils:media-manager-policies:v1';
   const LINK_MONITOR_REGEX_KEY = 'userscript-utils:link-monitor-regex-rows';
   const REQUEST_MONITOR_REGEX_KEY = 'userscript-utils:request-monitor-regex-rows';
   const REQUEST_MONITOR_EVENT = 'userscript-utils:request';
@@ -2305,12 +2306,12 @@ iframe {
     const auditSection = document.createElement('div');
     auditSection.className = 'utils-section';
     const auditTitle = document.createElement('h3');
-    auditTitle.textContent = 'Image Host Audit';
+    auditTitle.textContent = 'Media Manager';
     const auditBtn = document.createElement('button');
     auditBtn.type = 'button';
     auditBtn.className = 'utils-btn';
-    auditBtn.textContent = 'Open image host audit';
-    auditBtn.addEventListener('click', () => runImageHostAudit());
+    auditBtn.textContent = 'Open media manager';
+    auditBtn.addEventListener('click', () => runMediaManager());
     auditSection.append(auditTitle, auditBtn);
 
     const rightClickSection = document.createElement('div');
@@ -4928,13 +4929,13 @@ iframe {
   window.addEventListener('blur', () => consumedUtilityKeyups.clear());
   installClaudeFloatingComposer();
 
-  const runImageHostAudit = () => {
-    const previousAudit = window.__imageHostAudit;
+  const runMediaManager = () => {
+    const previousAudit = window.__mediaManager || window.__imageHostAudit;
     if (previousAudit && previousAudit.cleanup) {
       try {
         previousAudit.cleanup();
       } catch (err) {
-        console.warn('[img-host-audit] Previous cleanup failed:', err);
+        console.warn('[media-manager] Previous cleanup failed:', err);
       }
     }
 
@@ -4964,7 +4965,7 @@ iframe {
     const frames = Array.from(document.querySelectorAll('iframe') || []);
     const anchors = Array.from(document.querySelectorAll('a[href]') || []);
     if (!images.length && !frames.length && !anchors.length) {
-      console.info('[img-host-audit] No <img>, <iframe>, or <a> elements with hrefs found on this page.');
+      console.info('[media-manager] No <img>, <iframe>, or <a> elements with hrefs found on this page.');
       return;
     }
 
@@ -5206,8 +5207,8 @@ iframe {
         position: fixed;
         top: 16px;
         right: 16px;
-        width: 360px;
-        max-height: calc(50vh);
+        width: min(620px, calc(100vw - 32px));
+        max-height: calc(70vh);
         overflow: auto;
         background: rgba(12, 12, 12, 0.96);
         color: #f3f3f3;
@@ -5260,9 +5261,6 @@ iframe {
         color: #f1f1f1;
       }
       #${OVERLAY_ID} .img-host-audit-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 0;
         padding: 6px 8px;
@@ -5273,10 +5271,89 @@ iframe {
       #${OVERLAY_ID} .img-host-audit-row strong {
         font-size: 13px;
       }
+      #${OVERLAY_ID} .img-host-audit-row-main {
+        display: grid;
+        grid-template-columns: minmax(130px, 1fr) auto auto;
+        align-items: center;
+        gap: 8px;
+      }
       #${OVERLAY_ID} .img-host-audit-row .img-host-audit-buttons {
         display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
         gap: 4px;
         flex-shrink: 0;
+      }
+      #${OVERLAY_ID} .img-host-audit-policy {
+        display: inline-flex;
+        gap: 2px;
+      }
+      #${OVERLAY_ID} .img-host-audit-policy button {
+        padding: 4px 6px;
+        color: #b8b8b8;
+      }
+      #${OVERLAY_ID} .img-host-audit-policy button.active {
+        color: #fff;
+        border-color: rgba(255, 255, 255, 0.5);
+        background: #454545;
+      }
+      #${OVERLAY_ID} .img-host-audit-policy button.include.active {
+        background: #24553a;
+      }
+      #${OVERLAY_ID} .img-host-audit-policy button.ignore.active {
+        background: #5a2a2a;
+      }
+      #${OVERLAY_ID} .img-host-audit-item-list {
+        display: grid;
+        gap: 5px;
+        margin-top: 7px;
+        padding-top: 7px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      #${OVERLAY_ID} .img-host-audit-item {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+        padding: 5px;
+        background: rgba(0, 0, 0, 0.2);
+      }
+      #${OVERLAY_ID} .img-host-audit-item img {
+        width: 44px;
+        height: 36px;
+        object-fit: contain;
+        background: #090909;
+      }
+      #${OVERLAY_ID} .img-host-audit-item-url {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+      }
+      #${OVERLAY_ID} .img-host-audit-ignored summary {
+        cursor: pointer;
+        margin: 12px 0 6px;
+        color: #c4c4c4;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      #${OVERLAY_ID} .img-host-audit-profile {
+        color: #a3a3a3;
+        font-size: 12px;
+        margin: -5px 0 8px;
+      }
+      #${OVERLAY_ID} [hidden] {
+        display: none !important;
+      }
+      @media (max-width: 700px) {
+        #${OVERLAY_ID} .img-host-audit-row-main {
+          grid-template-columns: 1fr;
+        }
+        #${OVERLAY_ID} .img-host-audit-row .img-host-audit-buttons {
+          justify-content: flex-start;
+        }
       }
       #${OVERLAY_ID} .img-host-audit-summary {
         display: grid;
@@ -5345,7 +5422,7 @@ iframe {
     closeButton.textContent = '\u2715';
 
     const title = document.createElement('h2');
-    title.textContent = 'Image Host Audit';
+    title.textContent = 'Media Manager';
 
     const dragHandle = document.createElement('div');
     dragHandle.className = 'img-host-audit-drag';
@@ -5355,110 +5432,61 @@ iframe {
     const summaryGrid = document.createElement('div');
     summaryGrid.className = 'img-host-audit-summary';
 
-    const totalImages = document.createElement('span');
-    totalImages.textContent = `${images.length} image${images.length === 1 ? '' : 's'} total`;
+    const includedSummary = document.createElement('span');
+    const neutralSummary = document.createElement('span');
+    const ignoredSummary = document.createElement('span');
+    const detectedSummary = document.createElement('span');
+    detectedSummary.textContent = `${allEntries.length} detected elements`;
+    summaryGrid.append(includedSummary, neutralSummary, ignoredSummary, detectedSummary);
 
-    const uniqueHostCount = imageHostMap.size;
-    const imageHosts = document.createElement('span');
-    imageHosts.textContent = `${uniqueHostCount} image host${uniqueHostCount === 1 ? '' : 's'}`;
-
-    const linkedCount = [...imageEntries].filter((entry) => entry.linkHostKey !== '(no link)').length;
-    const linkHostsUnique = linkHostMap.size;
-    const linkedSummary = document.createElement('span');
-    linkedSummary.textContent = `${linkedCount} linked image${linkedCount === 1 ? '' : 's'}`;
-
-    const linkHostSummary = document.createElement('span');
-    linkHostSummary.textContent = `${linkHostsUnique} link host${linkHostsUnique === 1 ? '' : 's'}`;
-
-    summaryGrid.append(totalImages, imageHosts, linkedSummary, linkHostSummary);
-
-    if (frameEntries.length) {
-      const iframeCount = document.createElement('span');
-      iframeCount.textContent = `${frameEntries.length} iframe${frameEntries.length === 1 ? '' : 's'}`;
-
-      const iframeHostCount = document.createElement('span');
-      const iframeHostsUnique = frameHostMap.size;
-      iframeHostCount.textContent = `${iframeHostsUnique} iframe host${iframeHostsUnique === 1 ? '' : 's'}`;
-
-      summaryGrid.append(iframeCount, iframeHostCount);
-    }
-
-    if (anchorEntries.length) {
-      const pageLinkCount = document.createElement('span');
-      pageLinkCount.textContent = `${anchorEntries.length} page link${anchorEntries.length === 1 ? '' : 's'}`;
-
-      const pageLinkHostCount = document.createElement('span');
-      const pageLinkHostsUnique = anchorHostMap.size;
-      pageLinkHostCount.textContent = `${pageLinkHostsUnique} page link host${pageLinkHostsUnique === 1 ? '' : 's'}`;
-
-      summaryGrid.append(pageLinkCount, pageLinkHostCount);
-    }
+    const profileLabel = document.createElement('div');
+    profileLabel.className = 'img-host-audit-profile';
+    profileLabel.textContent = `Saved for ${window.location.origin}`;
 
     const actions = document.createElement('div');
     actions.className = 'img-host-audit-actions';
 
-    const highlightAllBtn = document.createElement('button');
-    highlightAllBtn.type = 'button';
-    highlightAllBtn.textContent = 'Highlight all';
-
-    const clearSelectionBtn = document.createElement('button');
-    clearSelectionBtn.type = 'button';
-    clearSelectionBtn.textContent = 'Clear selection';
-
-    const copyAllImagesBtn = document.createElement('button');
-    copyAllImagesBtn.type = 'button';
-    copyAllImagesBtn.textContent = 'Copy all image URLs';
-
-    const copyAllLinksBtn = document.createElement('button');
-    copyAllLinksBtn.type = 'button';
-    copyAllLinksBtn.textContent = 'Copy all link targets';
-
-    const copyAllPageLinksBtn = document.createElement('button');
-    copyAllPageLinksBtn.type = 'button';
-    copyAllPageLinksBtn.textContent = 'Copy all page links';
-    copyAllPageLinksBtn.disabled = anchorEntries.length === 0;
-
-    const copyAllIframesBtn = document.createElement('button');
-    copyAllIframesBtn.type = 'button';
-    copyAllIframesBtn.textContent = 'Copy all iframe URLs';
-    copyAllIframesBtn.disabled = frameEntries.length === 0;
-
-    const copyHighlightedBtn = document.createElement('button');
-    copyHighlightedBtn.type = 'button';
-    copyHighlightedBtn.textContent = 'Copy highlighted';
-    copyHighlightedBtn.disabled = true;
-
-    actions.append(
-      highlightAllBtn,
-      clearSelectionBtn,
-      copyAllImagesBtn,
-      copyAllLinksBtn,
-      copyAllPageLinksBtn,
-      copyAllIframesBtn,
-      copyHighlightedBtn
-    );
+    const copyIncludedBtn = document.createElement('button');
+    copyIncludedBtn.type = 'button';
+    copyIncludedBtn.textContent = 'Copy included URLs';
+    const exportJsonBtn = document.createElement('button');
+    exportJsonBtn.type = 'button';
+    exportJsonBtn.textContent = 'Export JSON';
+    const clearPreviewsBtn = document.createElement('button');
+    clearPreviewsBtn.type = 'button';
+    clearPreviewsBtn.textContent = 'Clear previews';
+    const resetProfileBtn = document.createElement('button');
+    resetProfileBtn.type = 'button';
+    resetProfileBtn.textContent = 'Reset site profile';
+    actions.append(copyIncludedBtn, exportJsonBtn, clearPreviewsBtn, resetProfileBtn);
 
     const highlightStatus = document.createElement('div');
     highlightStatus.className = 'img-host-audit-footer';
-    highlightStatus.textContent = 'Click a host to highlight its images, iframes, or links. Drag the title bar to move.';
+    highlightStatus.textContent = 'Include, ignore, or preview any number of groups. Policies save automatically for this origin.';
 
     const imageHostSectionTitle = document.createElement('h3');
-    imageHostSectionTitle.textContent = 'Image Hosts';
+    imageHostSectionTitle.textContent = 'Images';
     const imageHostList = document.createElement('div');
 
     const iframeHostSectionTitle = document.createElement('h3');
-    iframeHostSectionTitle.textContent = 'Iframe Hosts';
+    iframeHostSectionTitle.textContent = 'Iframes';
     const iframeHostList = document.createElement('div');
 
     const linkHostSectionTitle = document.createElement('h3');
-    linkHostSectionTitle.textContent = 'Linked Hosts';
+    linkHostSectionTitle.textContent = 'Image Link Targets';
     const linkHostList = document.createElement('div');
 
     const pageLinkSectionTitle = document.createElement('h3');
     pageLinkSectionTitle.textContent = 'Page Links';
     const pageLinkList = document.createElement('div');
 
-    overlay.append(closeButton, dragHandle, summaryGrid, actions, highlightStatus, imageHostSectionTitle, imageHostList);
+    const ignoredDetails = document.createElement('details');
+    ignoredDetails.className = 'img-host-audit-ignored';
+    const ignoredSummaryLabel = document.createElement('summary');
+    const ignoredList = document.createElement('div');
+    ignoredDetails.append(ignoredSummaryLabel, ignoredList);
+
+    overlay.append(closeButton, dragHandle, profileLabel, summaryGrid, actions, highlightStatus, imageHostSectionTitle, imageHostList);
     if (frameEntries.length) {
       overlay.append(iframeHostSectionTitle, iframeHostList);
     }
@@ -5466,142 +5494,312 @@ iframe {
     if (anchorEntries.length) {
       overlay.append(pageLinkSectionTitle, pageLinkList);
     }
+    overlay.appendChild(ignoredDetails);
     document.body.appendChild(overlay);
     const detachDrag = enableDraggablePanel(overlay, dragHandle);
 
-    let lastHighlightedEntries = [];
-    const hostHighlightControls = [];
+    const POLICY_NEUTRAL = 'neutral';
+    const POLICY_INCLUDE = 'include';
+    const POLICY_IGNORE = 'ignore';
+    const validPolicies = new Set([POLICY_NEUTRAL, POLICY_INCLUDE, POLICY_IGNORE]);
+    let savedPolicies = {};
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(MEDIA_MANAGER_POLICIES_KEY) || '{}');
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) savedPolicies = parsed;
+    } catch (err) {
+      console.warn('[media-manager] Failed to load saved policies:', err);
+    }
+
+    const savePolicies = () => {
+      try {
+        window.localStorage.setItem(MEDIA_MANAGER_POLICIES_KEY, JSON.stringify(savedPolicies));
+      } catch (err) {
+        console.warn('[media-manager] Failed to save policies:', err);
+      }
+    };
 
     const updateStatus = (message) => {
       highlightStatus.textContent = message;
     };
 
-    const setHighlightedEntries = (entries, activeGroupId = null) => {
-      const selectedSet = new Set(entries);
+    const sections = {
+      image: { title: imageHostSectionTitle, list: imageHostList },
+      iframe: { title: iframeHostSectionTitle, list: iframeHostList },
+      imageLink: { title: linkHostSectionTitle, list: linkHostList },
+      pageLink: { title: pageLinkSectionTitle, list: pageLinkList }
+    };
+    const groups = [];
+    const previewGroupIds = new Set();
+
+    const addGroups = (map, { kind, section, noun, valueForEntry }) => {
+      Array.from(map.entries())
+        .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
+        .forEach(([host, info]) => {
+          const id = `${kind}:${host}`;
+          const policy = validPolicies.has(savedPolicies[id]) ? savedPolicies[id] : POLICY_NEUTRAL;
+          const group = { id, kind, section, host, info, noun, valueForEntry, policy, row: null, policyButtons: null, previewButton: null };
+          if (policy === POLICY_INCLUDE) previewGroupIds.add(id);
+          groups.push(group);
+        });
+    };
+
+    addGroups(imageHostMap, { kind: 'image', section: 'image', noun: 'image', valueForEntry: (entry) => entry.src });
+    addGroups(frameHostMap, { kind: 'iframe', section: 'iframe', noun: 'iframe', valueForEntry: (entry) => entry.src });
+    addGroups(linkHostMap, { kind: 'image-link', section: 'imageLink', noun: 'linked image', valueForEntry: (entry) => entry.linkHref });
+    addGroups(anchorHostMap, { kind: 'page-link', section: 'pageLink', noun: 'link', valueForEntry: (entry) => entry.href });
+
+    const applyPreviews = () => {
+      const previewEntries = new Set();
+      groups.forEach((group) => {
+        if (!previewGroupIds.has(group.id)) return;
+        group.info.entries.forEach((entry) => previewEntries.add(entry));
+      });
       allEntries.forEach((entry) => {
-        const isSelected = selectedSet.has(entry);
-        entry.el.classList.toggle(SELECTED_CLASS, isSelected);
-        if (entry.type === 'iframe' && entry.overlay) {
-          entry.overlay.classList.toggle('selected', isSelected);
+        const active = previewEntries.has(entry);
+        entry.el.classList.toggle(SELECTED_CLASS, active);
+        if (entry.type === 'iframe' && entry.overlay) entry.overlay.classList.toggle('selected', active);
+      });
+      groups.forEach((group) => {
+        if (!group.previewButton) return;
+        const active = previewGroupIds.has(group.id);
+        group.previewButton.classList.toggle('img-host-audit-button-active', active);
+        group.previewButton.textContent = active ? 'Previewing' : 'Preview';
+      });
+    };
+
+    const collectIncludedItems = () => {
+      const itemsByUrl = new Map();
+      groups.forEach((group) => {
+        if (group.policy !== POLICY_INCLUDE) return;
+        group.info.entries.forEach((entry) => {
+          const url = group.valueForEntry(entry);
+          if (!url) return;
+          if (!itemsByUrl.has(url)) itemsByUrl.set(url, { url, kinds: new Set(), groups: new Set() });
+          const item = itemsByUrl.get(url);
+          item.kinds.add(group.kind);
+          item.groups.add(group.id);
+        });
+      });
+      return Array.from(itemsByUrl.values()).map((item) => ({
+        url: item.url,
+        kinds: Array.from(item.kinds),
+        groups: Array.from(item.groups)
+      }));
+    };
+
+    const updateSummary = () => {
+      const counts = { include: 0, neutral: 0, ignore: 0 };
+      groups.forEach((group) => { counts[group.policy] += 1; });
+      includedSummary.textContent = `${counts.include} included group${counts.include === 1 ? '' : 's'}`;
+      neutralSummary.textContent = `${counts.neutral} undecided group${counts.neutral === 1 ? '' : 's'}`;
+      ignoredSummary.textContent = `${counts.ignore} ignored group${counts.ignore === 1 ? '' : 's'}`;
+      const includedItems = collectIncludedItems();
+      copyIncludedBtn.disabled = includedItems.length === 0;
+      exportJsonBtn.disabled = includedItems.length === 0;
+      clearPreviewsBtn.disabled = previewGroupIds.size === 0;
+      resetProfileBtn.disabled = Object.keys(savedPolicies).length === 0;
+    };
+
+    const updateGroupRow = (group) => {
+      if (!group.policyButtons) return;
+      group.policyButtons.forEach((button, policy) => button.classList.toggle('active', group.policy === policy));
+      if (group.previewButton) {
+        const active = previewGroupIds.has(group.id);
+        group.previewButton.classList.toggle('img-host-audit-button-active', active);
+        group.previewButton.textContent = active ? 'Previewing' : 'Preview';
+      }
+    };
+
+    const renderGroups = () => {
+      Object.values(sections).forEach((sectionInfo) => { sectionInfo.list.textContent = ''; });
+      ignoredList.textContent = '';
+      const sectionCounts = { image: 0, iframe: 0, imageLink: 0, pageLink: 0 };
+      let ignoredCount = 0;
+      groups.forEach((group) => {
+        updateGroupRow(group);
+        if (group.policy === POLICY_IGNORE) {
+          ignoredList.appendChild(group.row);
+          ignoredCount += 1;
+        } else {
+          sections[group.section].list.appendChild(group.row);
+          sectionCounts[group.section] += 1;
         }
       });
-      lastHighlightedEntries = entries;
-      copyHighlightedBtn.disabled = entries.length === 0;
-      hostHighlightControls.forEach((control) => {
-        const isActive = Boolean(entries.length) && control.groupId === activeGroupId;
-        control.button.classList.toggle('img-host-audit-button-active', isActive);
+      Object.entries(sections).forEach(([key, sectionInfo]) => {
+        const visible = sectionCounts[key] > 0;
+        sectionInfo.title.hidden = !visible;
+        sectionInfo.list.hidden = !visible;
       });
+      ignoredDetails.hidden = ignoredCount === 0;
+      ignoredSummaryLabel.textContent = `Ignored (${ignoredCount} group${ignoredCount === 1 ? '' : 's'})`;
+      updateSummary();
     };
 
-    const highlightAll = () => {
-      setHighlightedEntries(allEntries, null);
-      updateStatus(`Highlighted all ${allEntries.length} element${allEntries.length === 1 ? '' : 's'}.`);
+    const setGroupPolicy = (group, policy) => {
+      group.policy = validPolicies.has(policy) ? policy : POLICY_NEUTRAL;
+      if (group.policy === POLICY_NEUTRAL) delete savedPolicies[group.id];
+      else savedPolicies[group.id] = group.policy;
+      if (group.policy === POLICY_INCLUDE) previewGroupIds.add(group.id);
+      if (group.policy === POLICY_IGNORE) previewGroupIds.delete(group.id);
+      savePolicies();
+      renderGroups();
+      applyPreviews();
+      updateStatus(`${group.host}: ${group.policy}. Saved for ${window.location.origin}.`);
     };
 
-    const clearSelection = () => {
-      setHighlightedEntries([], null);
-      updateStatus('Selection cleared.');
+    const buildItemList = (group, container) => {
+      const limit = 200;
+      group.info.entries.slice(0, limit).forEach((entry) => {
+        const item = document.createElement('div');
+        item.className = 'img-host-audit-item';
+        const thumb = document.createElement('div');
+        if (entry.type === 'image' && entry.src) {
+          const image = document.createElement('img');
+          image.src = entry.src;
+          image.loading = 'lazy';
+          image.alt = '';
+          thumb.appendChild(image);
+        }
+        const info = document.createElement('div');
+        info.style.minWidth = '0';
+        const url = document.createElement('div');
+        url.className = 'img-host-audit-item-url';
+        url.textContent = group.valueForEntry(entry) || '(no URL)';
+        url.title = url.textContent;
+        const meta = document.createElement('div');
+        meta.style.fontSize = '11px';
+        meta.style.color = '#a3a3a3';
+        const parts = [];
+        if (entry.type === 'image') {
+          if (entry.el.naturalWidth && entry.el.naturalHeight) parts.push(`${entry.el.naturalWidth}×${entry.el.naturalHeight}`);
+          if (entry.el.alt) parts.push(`alt: ${entry.el.alt}`);
+          if (entry.linkHref) parts.push(`links to ${entry.linkHref}`);
+        } else if (entry.type === 'anchor') {
+          const text = String(entry.el.textContent || '').trim().replace(/\s+/g, ' ');
+          if (text) parts.push(text.slice(0, 120));
+        } else if (entry.type === 'iframe') {
+          const rect = entry.el.getBoundingClientRect();
+          if (rect.width && rect.height) parts.push(`${Math.round(rect.width)}×${Math.round(rect.height)}`);
+        }
+        meta.textContent = parts.join(' · ') || group.noun;
+        info.append(url, meta);
+        item.append(thumb, info);
+        container.appendChild(item);
+      });
+      if (group.info.entries.length > limit) {
+        const note = document.createElement('div');
+        note.className = 'img-host-audit-footer';
+        note.textContent = `Showing the first ${limit} of ${group.info.entries.length} items.`;
+        container.appendChild(note);
+      }
     };
 
-    const copyText = async (text, successMessage) => {
+    const createGroupRow = (group) => {
+      const row = document.createElement('div');
+      row.className = 'img-host-audit-row';
+      row.dataset.mediaManagerGroupId = group.id;
+      const main = document.createElement('div');
+      main.className = 'img-host-audit-row-main';
+      const label = document.createElement('div');
+      label.style.minWidth = '0';
+      const strong = document.createElement('strong');
+      strong.textContent = group.host;
+      strong.title = group.host;
+      const count = document.createElement('div');
+      count.style.fontSize = '12px';
+      count.style.color = '#cbd5f5';
+      count.textContent = `${group.info.count} ${group.noun}${group.info.count === 1 ? '' : 's'}`;
+      label.append(strong, count);
+
+      const policyControls = document.createElement('div');
+      policyControls.className = 'img-host-audit-policy';
+      group.policyButtons = new Map();
+      for (const [policy, text] of [[POLICY_INCLUDE, 'Include'], [POLICY_NEUTRAL, 'Neutral'], [POLICY_IGNORE, 'Ignore']]) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = text;
+        button.className = policy;
+        button.addEventListener('click', () => setGroupPolicy(group, policy));
+        group.policyButtons.set(policy, button);
+        policyControls.appendChild(button);
+      }
+
+      const buttons = document.createElement('div');
+      buttons.className = 'img-host-audit-buttons';
+      const previewButton = document.createElement('button');
+      previewButton.type = 'button';
+      previewButton.addEventListener('click', () => {
+        if (previewGroupIds.has(group.id)) previewGroupIds.delete(group.id);
+        else previewGroupIds.add(group.id);
+        applyPreviews();
+        updateSummary();
+      });
+      group.previewButton = previewButton;
+      const inspectButton = document.createElement('button');
+      inspectButton.type = 'button';
+      inspectButton.textContent = 'Inspect';
+      const itemList = document.createElement('div');
+      itemList.className = 'img-host-audit-item-list';
+      itemList.hidden = true;
+      let itemListBuilt = false;
+      inspectButton.addEventListener('click', () => {
+        if (!itemListBuilt) {
+          buildItemList(group, itemList);
+          itemListBuilt = true;
+        }
+        itemList.hidden = !itemList.hidden;
+        inspectButton.textContent = itemList.hidden ? 'Inspect' : 'Hide items';
+      });
+      buttons.append(previewButton, inspectButton);
+      main.append(label, policyControls, buttons);
+      row.append(main, itemList);
+      group.row = row;
+      updateGroupRow(group);
+      return row;
+    };
+
+    groups.forEach((group) => createGroupRow(group));
+    renderGroups();
+    applyPreviews();
+
+    const copyManagedText = async (text, successMessage) => {
       if (!text) {
-        updateStatus('Nothing to copy.');
+        updateStatus('Nothing included to copy.');
         return;
       }
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(text);
-        } else {
-          const temp = document.createElement('textarea');
-          temp.value = text;
-          temp.style.position = 'fixed';
-          temp.style.top = '-1000px';
-          document.body.appendChild(temp);
-          temp.select();
-          document.execCommand('copy');
-          temp.remove();
-        }
-        updateStatus(successMessage || 'Copied to clipboard.');
-      } catch (err) {
-        console.error('[img-host-audit] Clipboard copy failed:', err);
-        updateStatus('Clipboard copy failed. Check console for details.');
-      }
+      await copyTextToClipboard(text);
+      updateStatus(successMessage);
     };
 
-    const createHostRows = (map, listEl, { typeLabel = 'item', noun = 'item', nounPlural = null } = {}) => {
-      const rows = Array.from(map.entries()).sort((a, b) => b[1].count - a[1].count);
-      rows.forEach(([host, info]) => {
-        const row = document.createElement('div');
-        row.className = 'img-host-audit-row';
-
-        const label = document.createElement('div');
-        label.style.flex = '1';
-        const strong = document.createElement('strong');
-        strong.textContent = host;
-        const pluralForm = nounPlural || `${noun}s`;
-        const nounLabel = info.count === 1 ? noun : pluralForm;
-        const count = document.createElement('div');
-        count.style.fontSize = '12px';
-        count.style.color = '#cbd5f5';
-        count.textContent = `${info.count} ${nounLabel}`;
-        label.append(strong, count);
-
-        const buttons = document.createElement('div');
-        buttons.className = 'img-host-audit-buttons';
-        const highlightBtn = document.createElement('button');
-        highlightBtn.type = 'button';
-        highlightBtn.textContent = 'Highlight';
-        const groupId = `${typeLabel}:${host}`;
-        highlightBtn.addEventListener('click', () => {
-          setHighlightedEntries(info.entries, groupId);
-          updateStatus(`Highlighted ${info.count} ${nounLabel} for ${typeLabel} host "${host}".`);
-        });
-        hostHighlightControls.push({ button: highlightBtn, groupId });
-
-        const copyBtn = document.createElement('button');
-        copyBtn.type = 'button';
-        copyBtn.textContent = 'Copy URLs';
-        copyBtn.disabled = info.urls.length === 0;
-        copyBtn.addEventListener('click', () => {
-          copyText(info.urls.join('\n'), `Copied ${info.urls.length} URL${info.urls.length === 1 ? '' : 's'} for ${typeLabel} host "${host}".`);
-        });
-
-        buttons.append(highlightBtn, copyBtn);
-        row.append(label, buttons);
-        listEl.appendChild(row);
-      });
-    };
-
-    createHostRows(imageHostMap, imageHostList, { typeLabel: 'image', noun: 'image' });
-    if (frameEntries.length) {
-      createHostRows(frameHostMap, iframeHostList, { typeLabel: 'iframe', noun: 'iframe' });
-    }
-    createHostRows(linkHostMap, linkHostList, { typeLabel: 'linked image', noun: 'linked image', nounPlural: 'linked images' });
-    if (anchorEntries.length) {
-      createHostRows(anchorHostMap, pageLinkList, { typeLabel: 'page link', noun: 'link' });
-    }
-
-    highlightAllBtn.addEventListener('click', highlightAll);
-    clearSelectionBtn.addEventListener('click', clearSelection);
-    copyAllImagesBtn.addEventListener('click', () => {
-      const urls = imageEntries.map((entry) => entry.src).filter(Boolean);
-      copyText(urls.join('\n'), `Copied ${urls.length} image URL${urls.length === 1 ? '' : 's'}.`);
+    copyIncludedBtn.addEventListener('click', () => {
+      const items = collectIncludedItems();
+      copyManagedText(items.map((item) => item.url).join('\n'), `Copied ${items.length} deduplicated included URL${items.length === 1 ? '' : 's'}.`);
     });
-    copyAllLinksBtn.addEventListener('click', () => {
-      const urls = imageEntries.map((entry) => entry.linkHref).filter(Boolean);
-      copyText(urls.join('\n'), `Copied ${urls.length} link target${urls.length === 1 ? '' : 's'}.`);
+    exportJsonBtn.addEventListener('click', () => {
+      const items = collectIncludedItems();
+      const manifest = {
+        pageUrl: window.location.href,
+        origin: window.location.origin,
+        capturedAt: Math.floor(Date.now() / 1000),
+        items
+      };
+      copyManagedText(JSON.stringify(manifest, null, 2), `Copied JSON manifest with ${items.length} item${items.length === 1 ? '' : 's'}.`);
     });
-    copyAllPageLinksBtn.addEventListener('click', () => {
-      const urls = anchorEntries.map((entry) => entry.href).filter(Boolean);
-      copyText(urls.join('\n'), `Copied ${urls.length} page link${urls.length === 1 ? '' : 's'}.`);
+    clearPreviewsBtn.addEventListener('click', () => {
+      previewGroupIds.clear();
+      applyPreviews();
+      updateSummary();
+      updateStatus('Page previews cleared. Saved include and ignore policies are unchanged.');
     });
-    copyAllIframesBtn.addEventListener('click', () => {
-      const urls = frameEntries.map((entry) => entry.src).filter(Boolean);
-      copyText(urls.join('\n'), `Copied ${urls.length} iframe URL${urls.length === 1 ? '' : 's'}.`);
-    });
-    copyHighlightedBtn.addEventListener('click', () => {
-      const urls = lastHighlightedEntries.map((entry) => entry.copyValue).filter(Boolean);
-      copyText(urls.join('\n'), `Copied ${urls.length} highlighted URL${urls.length === 1 ? '' : 's'}.`);
+    resetProfileBtn.addEventListener('click', () => {
+      if (!window.confirm(`Reset all saved Media Manager policies for ${window.location.origin}?`)) return;
+      savedPolicies = {};
+      groups.forEach((group) => { group.policy = POLICY_NEUTRAL; });
+      previewGroupIds.clear();
+      savePolicies();
+      renderGroups();
+      applyPreviews();
+      updateStatus(`Site profile reset for ${window.location.origin}.`);
     });
 
     let cleanedUp = false;
@@ -5662,7 +5860,7 @@ iframe {
       linkHref: entry.linkHref || '(none)'
     }));
     if (consoleImageData.length) {
-      console.info('[img-host-audit] Images');
+      console.info('[media-manager] Images');
       console.table(consoleImageData);
     }
     const consoleFrameData = frameEntries.map((entry) => ({
@@ -5672,7 +5870,7 @@ iframe {
       frameHost: entry.frameHostKey
     }));
     if (consoleFrameData.length) {
-      console.info('[img-host-audit] Iframes');
+      console.info('[media-manager] Iframes');
       console.table(consoleFrameData);
     }
 
@@ -5683,11 +5881,11 @@ iframe {
       linkHost: entry.anchorHostKey
     }));
     if (consoleLinkData.length) {
-      console.info('[img-host-audit] Page Links');
+      console.info('[media-manager] Page Links');
       console.table(consoleLinkData);
     }
 
-    window.__imageHostAudit = {
+    const managerApi = {
       images: imageEntries,
       iframes: frameEntries,
       links: anchorEntries,
@@ -5695,7 +5893,12 @@ iframe {
       iframeHosts: frameHostMap,
       linkHosts: linkHostMap,
       pageLinkHosts: anchorHostMap,
+      groups,
+      getPolicies: () => ({ ...savedPolicies }),
+      getIncludedItems: collectIncludedItems,
       cleanup
     };
+    window.__mediaManager = managerApi;
+    window.__imageHostAudit = managerApi;
   };
 })();

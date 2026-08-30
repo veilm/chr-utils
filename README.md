@@ -26,7 +26,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - X settings panel (persistent): hide selected left-nav entries, hide right sidebar, and hide Grok action buttons on posts
 - Reddit muted-users mode: mute directly beside any feed-post author, maintain a persistent Reddit-wide username list, and replace muted posts with compact placeholders that can unmute them in place
 - Dark mode presets: `Midnight` (direct recolor), `Invert` (full-page invert), and `Amber` (warm sepia-like recolor)
-- Image host audit overlay (highlights images, iframes, and links)
+- Media Manager: group images, iframe sources, image link targets, and page links by host; persist Include/Neutral/Ignore policies per origin, preview groups on-page, inspect individual items, and copy deduplicated URLs or a JSON manifest
 - YouTube video scan panel with filters (title, views, timestamp, URLs, normalized counts)
 - Link monitor popup panel (50ms `<a href>` scan, multiple regex filters, deduped match list, copy/clear actions)
 - Request monitor popup panel (logs page request URLs from `fetch`, `XMLHttpRequest`, media elements, and resource timing, persistent regex filters, copy/clear actions)

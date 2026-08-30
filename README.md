@@ -12,6 +12,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - Alt+Shift+P opens the clipboard URL in a new tab (via local server)
 - Alt+Y copies the current page URL with a brief overlay confirmation
 - Utility-consumed shortcuts stop propagation and suppress their matching keyup so page bindings do not also act on them
+- Alt+Q and its tool panels remember their open state and dragged positions per tab across refreshes, same-origin page loads, and SPA route changes; page-analysis panels rebuild against the new page
 - Alt+Shift+A toggles a per-site dark mode; mode selection persists by host
 - Right-click list stored in local storage with copy/clear helpers
 - Instagram: periodically unblocks overlays above visible `<video>` elements so native controls remain clickable
@@ -26,7 +27,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - X settings panel (persistent): hide selected left-nav entries, hide right sidebar, and hide Grok action buttons on posts
 - Reddit muted-users mode: mute directly beside any feed-post author, maintain a persistent Reddit-wide username list, and replace muted posts with compact placeholders that can unmute them in place
 - Dark mode presets: `Midnight` (direct recolor), `Invert` (full-page invert), and `Amber` (warm sepia-like recolor)
-- Media Manager: group images, iframe sources, image link targets, and page links by host; persist Include/Neutral/Ignore policies per origin, preview groups on-page, inspect individual items, and copy deduplicated URLs or a JSON manifest
+- Media Manager: group images, iframe sources, image link targets, and page links by host; persist Include/Neutral/Ignore policies per origin, preview groups on-page, inspect individual items, rescan dynamic pages, and copy deduplicated URLs or a JSON manifest
 - YouTube video scan panel with filters (title, views, timestamp, URLs, normalized counts)
 - Link monitor popup panel (50ms `<a href>` scan, multiple regex filters, deduped match list, copy/clear actions)
 - Request monitor popup panel (logs page request URLs from `fetch`, `XMLHttpRequest`, media elements, and resource timing, persistent regex filters, copy/clear actions)

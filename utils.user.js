@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.2.0
+// @version      0.2.1
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -145,6 +145,15 @@ video::-webkit-media-controls-overlay-enclosure {
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
   const RIGHT_CLICK_PRIORITY_KEY = 'userscript-utils:right-click-priority';
   const MEDIA_MANAGER_POLICIES_KEY = 'userscript-utils:media-manager-policies:v1';
+  const WORKSPACE_STATE_KEY = 'userscript-utils:workspace-state:v1';
+  const WORKSPACE_PANEL_IDS = Object.freeze({
+    menu: 'utils-menu',
+    mediaManager: 'media-manager',
+    linkMonitor: 'link-monitor',
+    requestMonitor: 'request-monitor',
+    xSettings: 'x-settings',
+    youtubeVideos: 'youtube-videos'
+  });
   const LINK_MONITOR_REGEX_KEY = 'userscript-utils:link-monitor-regex-rows';
   const REQUEST_MONITOR_REGEX_KEY = 'userscript-utils:request-monitor-regex-rows';
   const REQUEST_MONITOR_EVENT = 'userscript-utils:request';
@@ -331,6 +340,7 @@ iframe {
   let darkModeModeButtons = null;
   let darkModeSiteMap = {};
   let currentDarkMode = DARK_MODE_OFF;
+  let workspaceStateCache = null;
   let lastDarkMode = DEFAULT_DARK_MODE;
   let scrollDirection = 0;
   let scrollMultiplier = 1;
@@ -1521,8 +1531,62 @@ iframe {
     updateXSettingsInputs();
   };
 
+  const loadWorkspaceState = () => {
+    if (workspaceStateCache) return workspaceStateCache;
+    const fallback = { open: {}, layouts: {} };
+    try {
+      const parsed = JSON.parse(window.sessionStorage.getItem(WORKSPACE_STATE_KEY) || '{}');
+      workspaceStateCache = {
+        open: parsed && typeof parsed.open === 'object' ? parsed.open : {},
+        layouts: parsed && typeof parsed.layouts === 'object' ? parsed.layouts : {}
+      };
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load workspace state:', err);
+      workspaceStateCache = fallback;
+    }
+    return workspaceStateCache;
+  };
+
+  const saveWorkspaceState = () => {
+    try {
+      window.sessionStorage.setItem(WORKSPACE_STATE_KEY, JSON.stringify(loadWorkspaceState()));
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save workspace state:', err);
+    }
+  };
+
+  const setWorkspacePanelOpen = (panelId, open) => {
+    if (!panelId) return;
+    const state = loadWorkspaceState();
+    if (open) state.open[panelId] = true;
+    else delete state.open[panelId];
+    saveWorkspaceState();
+  };
+
+  const isWorkspacePanelOpen = (panelId) => Boolean(loadWorkspaceState().open[panelId]);
+
+  const saveWorkspacePanelLayout = (panelId, panel) => {
+    if (!panelId || !panel || !panel.isConnected) return;
+    const rect = panel.getBoundingClientRect();
+    const state = loadWorkspaceState();
+    state.layouts[panelId] = { left: Math.round(rect.left), top: Math.round(rect.top) };
+    saveWorkspaceState();
+  };
+
+  const applyWorkspacePanelLayout = (panelId, panel, minMargin) => {
+    if (!panelId || !panel) return;
+    const layout = loadWorkspaceState().layouts[panelId];
+    if (!layout || !Number.isFinite(layout.left) || !Number.isFinite(layout.top)) return;
+    const maxLeft = Math.max(minMargin, window.innerWidth - panel.offsetWidth - minMargin);
+    const maxTop = Math.max(minMargin, window.innerHeight - panel.offsetHeight - minMargin);
+    panel.style.left = `${Math.min(maxLeft, Math.max(minMargin, layout.left))}px`;
+    panel.style.top = `${Math.min(maxTop, Math.max(minMargin, layout.top))}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  };
+
   const draggablePanelStateByNode = new WeakMap();
-  const enableDraggablePanel = (panel, handle, { minMargin = 8 } = {}) => {
+  const enableDraggablePanel = (panel, handle, { minMargin = 8, workspaceId = null } = {}) => {
     if (!panel || !handle) return () => {};
     const existingState = draggablePanelStateByNode.get(panel);
     if (existingState && typeof existingState.detach === 'function') {
@@ -1539,6 +1603,8 @@ iframe {
       detach: null
     };
 
+    applyWorkspacePanelLayout(workspaceId, panel, minMargin);
+
     const stopDragging = () => {
       if (!state.isDragging) return;
       state.isDragging = false;
@@ -1549,6 +1615,7 @@ iframe {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', stopDragging);
       window.removeEventListener('pointercancel', stopDragging);
+      saveWorkspacePanelLayout(workspaceId, panel);
     };
 
     const onPointerMove = (event) => {
@@ -1849,7 +1916,7 @@ iframe {
       saveClaudeComposerLayout(layout);
     };
     updateToggle();
-    enableDraggablePanel(panel, header);
+    enableDraggablePanel(panel, header, { workspaceId: WORKSPACE_PANEL_IDS.menu });
     header.addEventListener('pointerup', () => window.setTimeout(saveLayout, 0));
     toggle.addEventListener('click', () => {
       panel.classList.toggle('collapsed');
@@ -2555,7 +2622,7 @@ iframe {
     return panel;
   };
 
-  const setMenuOpen = (open) => {
+  const setMenuOpen = (open, { remember = true } = {}) => {
     if (open) {
       if (!menuEl) {
         menuEl = buildMenu();
@@ -2566,6 +2633,7 @@ iframe {
     } else if (menuEl && menuEl.isConnected) {
       menuEl.remove();
     }
+    if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.menu, Boolean(open));
   };
 
   const updateRightClickModeButtons = () => {
@@ -3436,8 +3504,11 @@ iframe {
     copyFilteredUrlsBtn.disabled = sorted.length === 0;
   };
 
-  const closeXSettingsPanel = () => {
-    if (!xSettingsOverlayState) return;
+  const closeXSettingsPanel = ({ remember = true } = {}) => {
+    if (!xSettingsOverlayState) {
+      if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.xSettings, false);
+      return;
+    }
     const { overlay, style, detachDrag } = xSettingsOverlayState;
     if (typeof detachDrag === 'function') {
       detachDrag();
@@ -3450,6 +3521,7 @@ iframe {
     }
     xSettingsOverlayState = null;
     xSettingsInputs = null;
+    if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.xSettings, false);
   };
 
   const openXSettingsPanel = () => {
@@ -3458,7 +3530,7 @@ iframe {
     if (xSettingsOverlayState && xSettingsOverlayState.overlay && xSettingsOverlayState.overlay.isConnected) {
       return;
     }
-    closeXSettingsPanel();
+    closeXSettingsPanel({ remember: false });
 
     const style = document.createElement('style');
     style.id = STYLE_ID;
@@ -3569,14 +3641,18 @@ iframe {
       status
     );
     document.body.appendChild(overlay);
-    const detachDrag = enableDraggablePanel(overlay, header);
+    const detachDrag = enableDraggablePanel(overlay, header, { workspaceId: WORKSPACE_PANEL_IDS.xSettings });
 
     xSettingsOverlayState = { overlay, style, detachDrag };
     updateXSettingsInputs();
+    setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.xSettings, true);
   };
 
-  const closeLinkMonitorPanel = () => {
-    if (!linkMonitorOverlayState) return;
+  const closeLinkMonitorPanel = ({ remember = true } = {}) => {
+    if (!linkMonitorOverlayState) {
+      if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.linkMonitor, false);
+      return;
+    }
     const { intervalId, overlay, style, mutationObserver, detachDrag } = linkMonitorOverlayState;
     if (typeof detachDrag === 'function') {
       detachDrag();
@@ -3594,6 +3670,7 @@ iframe {
       style.remove();
     }
     linkMonitorOverlayState = null;
+    if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.linkMonitor, false);
   };
 
   const openLinkMonitorPanel = () => {
@@ -3602,7 +3679,7 @@ iframe {
     if (linkMonitorOverlayState && linkMonitorOverlayState.overlay && linkMonitorOverlayState.overlay.isConnected) {
       return;
     }
-    closeLinkMonitorPanel();
+    closeLinkMonitorPanel({ remember: false });
 
     const style = document.createElement('style');
     style.id = STYLE_ID;
@@ -3836,7 +3913,7 @@ iframe {
 
     overlay.append(header, regexRowsWrap, controlsRow, actionRow, hint, listEl);
     document.body.appendChild(overlay);
-    const detachDrag = enableDraggablePanel(overlay, header);
+    const detachDrag = enableDraggablePanel(overlay, header, { workspaceId: WORKSPACE_PANEL_IDS.linkMonitor });
 
     const matches = [];
     const matchSet = new Set();
@@ -3889,7 +3966,7 @@ iframe {
     if (typeof MutationObserver === 'function') {
       mutationObserver = new MutationObserver(() => {
         if (!overlay.isConnected) {
-          closeLinkMonitorPanel();
+          closeLinkMonitorPanel({ remember: false });
         }
       });
       mutationObserver.observe(document.body, { childList: true });
@@ -3902,10 +3979,14 @@ iframe {
       mutationObserver,
       detachDrag
     };
+    setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.linkMonitor, true);
   };
 
-  const closeRequestMonitorPanel = () => {
-    if (!requestMonitorOverlayState) return;
+  const closeRequestMonitorPanel = ({ remember = true } = {}) => {
+    if (!requestMonitorOverlayState) {
+      if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.requestMonitor, false);
+      return;
+    }
     const { overlay, style, mutationObserver, detachDrag } = requestMonitorOverlayState;
     if (typeof detachDrag === 'function') {
       detachDrag();
@@ -3920,6 +4001,7 @@ iframe {
       style.remove();
     }
     requestMonitorOverlayState = null;
+    if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.requestMonitor, false);
   };
 
   const openRequestMonitorPanel = () => {
@@ -3928,7 +4010,7 @@ iframe {
     if (requestMonitorOverlayState && requestMonitorOverlayState.overlay && requestMonitorOverlayState.overlay.isConnected) {
       return;
     }
-    closeRequestMonitorPanel();
+    closeRequestMonitorPanel({ remember: false });
 
     const style = document.createElement('style');
     style.id = STYLE_ID;
@@ -4177,7 +4259,7 @@ iframe {
 
     overlay.append(header, regexRowsWrap, controlsRow, actionRow, hint, listEl);
     document.body.appendChild(overlay);
-    const detachDrag = enableDraggablePanel(overlay, header);
+    const detachDrag = enableDraggablePanel(overlay, header, { workspaceId: WORKSPACE_PANEL_IDS.requestMonitor });
 
     let visibleEntries = [];
     function formatRequestEntry(entry) {
@@ -4226,7 +4308,7 @@ iframe {
     if (typeof MutationObserver === 'function') {
       mutationObserver = new MutationObserver(() => {
         if (!overlay.isConnected) {
-          closeRequestMonitorPanel();
+          closeRequestMonitorPanel({ remember: false });
         }
       });
       mutationObserver.observe(document.body, { childList: true });
@@ -4240,10 +4322,14 @@ iframe {
       render: renderRequests
     };
     renderRequests();
+    setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.requestMonitor, true);
   };
 
-  const closeYoutubeVideoPanel = () => {
-    if (!ytVideoOverlayState) return;
+  const closeYoutubeVideoPanel = ({ remember = true } = {}) => {
+    if (!ytVideoOverlayState) {
+      if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.youtubeVideos, false);
+      return;
+    }
     const { overlay, style, detachDrag } = ytVideoOverlayState;
     if (typeof detachDrag === 'function') {
       detachDrag();
@@ -4255,12 +4341,13 @@ iframe {
       style.remove();
     }
     ytVideoOverlayState = null;
+    if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.youtubeVideos, false);
   };
 
   const openYoutubeVideoPanel = () => {
     const OVERLAY_ID = 'yt-video-audit-overlay';
     const STYLE_ID = 'yt-video-audit-style';
-    closeYoutubeVideoPanel();
+    closeYoutubeVideoPanel({ remember: false });
 
     const style = document.createElement('style');
     style.id = STYLE_ID;
@@ -4479,7 +4566,7 @@ iframe {
 
     overlay.append(header, scanRow, filterRow, hint, actions, listEl);
     document.body.appendChild(overlay);
-    const detachDrag = enableDraggablePanel(overlay, header);
+    const detachDrag = enableDraggablePanel(overlay, header, { workspaceId: WORKSPACE_PANEL_IDS.youtubeVideos });
 
     ytVideoOverlayState = {
       overlay,
@@ -4515,6 +4602,7 @@ iframe {
       }
     });
     sortSelect.addEventListener('change', () => applyYoutubeFilters());
+    setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.youtubeVideos, true);
   };
 
   const flashElement = (el) => {
@@ -5446,6 +5534,9 @@ iframe {
     const actions = document.createElement('div');
     actions.className = 'img-host-audit-actions';
 
+    const rescanBtn = document.createElement('button');
+    rescanBtn.type = 'button';
+    rescanBtn.textContent = 'Rescan page';
     const copyIncludedBtn = document.createElement('button');
     copyIncludedBtn.type = 'button';
     copyIncludedBtn.textContent = 'Copy included URLs';
@@ -5458,7 +5549,7 @@ iframe {
     const resetProfileBtn = document.createElement('button');
     resetProfileBtn.type = 'button';
     resetProfileBtn.textContent = 'Reset site profile';
-    actions.append(copyIncludedBtn, exportJsonBtn, clearPreviewsBtn, resetProfileBtn);
+    actions.append(rescanBtn, copyIncludedBtn, exportJsonBtn, clearPreviewsBtn, resetProfileBtn);
 
     const highlightStatus = document.createElement('div');
     highlightStatus.className = 'img-host-audit-footer';
@@ -5496,7 +5587,7 @@ iframe {
     }
     overlay.appendChild(ignoredDetails);
     document.body.appendChild(overlay);
-    const detachDrag = enableDraggablePanel(overlay, dragHandle);
+    const detachDrag = enableDraggablePanel(overlay, dragHandle, { workspaceId: WORKSPACE_PANEL_IDS.mediaManager });
 
     const POLICY_NEUTRAL = 'neutral';
     const POLICY_INCLUDE = 'include';
@@ -5762,6 +5853,8 @@ iframe {
     renderGroups();
     applyPreviews();
 
+    rescanBtn.addEventListener('click', () => runMediaManager());
+
     const copyManagedText = async (text, successMessage) => {
       if (!text) {
         updateStatus('Nothing included to copy.');
@@ -5847,6 +5940,7 @@ iframe {
     };
 
     closeButton.addEventListener('click', () => {
+      setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.mediaManager, false);
       updateStatus('Overlay closed.');
       cleanup();
     });
@@ -5900,5 +5994,53 @@ iframe {
     };
     window.__mediaManager = managerApi;
     window.__imageHostAudit = managerApi;
+    setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.mediaManager, true);
   };
+
+  let workspaceRestoreTimer = null;
+  let lastWorkspaceUrl = window.location.href;
+
+  const restoreWorkspacePanels = () => {
+    if (!document.body) return;
+    if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.menu)) setMenuOpen(true, { remember: false });
+    if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.xSettings) && isXHost()) openXSettingsPanel();
+    if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.youtubeVideos) && isYouTubeHost()) openYoutubeVideoPanel();
+    if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.linkMonitor)) openLinkMonitorPanel();
+    if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.requestMonitor)) openRequestMonitorPanel();
+    if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.mediaManager)) runMediaManager();
+  };
+
+  const scheduleWorkspaceRestore = (delayMs = 350) => {
+    if (workspaceRestoreTimer !== null) window.clearTimeout(workspaceRestoreTimer);
+    workspaceRestoreTimer = window.setTimeout(() => {
+      workspaceRestoreTimer = null;
+      restoreWorkspacePanels();
+    }, delayMs);
+  };
+
+  const handleWorkspaceRouteChange = () => {
+    const nextUrl = window.location.href;
+    if (nextUrl === lastWorkspaceUrl) return;
+    lastWorkspaceUrl = nextUrl;
+    const desiredOpenPanels = { ...loadWorkspaceState().open };
+    setMenuOpen(false, { remember: false });
+    closeXSettingsPanel({ remember: false });
+    closeYoutubeVideoPanel({ remember: false });
+    closeLinkMonitorPanel({ remember: false });
+    closeRequestMonitorPanel({ remember: false });
+    requestMonitorEntries.length = 0;
+    const manager = window.__mediaManager || window.__imageHostAudit;
+    if (manager && typeof manager.cleanup === 'function') manager.cleanup();
+    loadWorkspaceState().open = desiredOpenPanels;
+    saveWorkspaceState();
+    scheduleWorkspaceRestore(450);
+  };
+
+  window.setInterval(handleWorkspaceRouteChange, 300);
+  window.addEventListener('pageshow', () => scheduleWorkspaceRestore(350));
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => scheduleWorkspaceRestore(350), { once: true });
+  } else {
+    scheduleWorkspaceRestore(350);
+  }
 })();

@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.3.0
+// @version      0.3.1
 // @description  Global utilities launcher (Alt+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -3305,36 +3305,21 @@ iframe {
         pointer-events: none;
         overflow: hidden;
         z-index: 2147483645;
-        border: 4px solid rgba(251, 191, 36, 0.88);
-        box-shadow: inset 0 0 28px rgba(251, 191, 36, 0.38);
-        box-sizing: border-box;
-        animation: page-note-border-pulse 1.35s ease-in-out infinite alternate;
       }
-      #${PAGE_NOTE_EFFECT_ID}::before,
-      #${PAGE_NOTE_EFFECT_ID}::after {
+      #${PAGE_NOTE_EFFECT_ID}::before {
         content: '';
         position: absolute;
-        top: -80%;
-        left: -38%;
-        width: 18vw;
-        min-width: 130px;
-        height: 260%;
+        inset: -70vh -50vw;
         transform: rotate(24deg);
         background: repeating-linear-gradient(
           90deg,
-          rgba(251, 191, 36, 0) 0 18px,
-          rgba(251, 191, 36, 0.44) 18px 24px,
-          rgba(255, 255, 255, 0.5) 24px 27px,
-          rgba(251, 191, 36, 0) 27px 48px
+          rgba(251, 191, 36, 0) 0 156px,
+          rgba(251, 191, 36, 0.44) 156px 162px,
+          rgba(255, 255, 255, 0.5) 162px 165px,
+          rgba(251, 191, 36, 0) 165px 192px
         );
         filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.75));
-        animation: page-note-sweep 2.7s ease-in-out 3;
-      }
-      #${PAGE_NOTE_EFFECT_ID}::after {
-        left: auto;
-        right: -38%;
-        animation-delay: 0.42s;
-        animation-direction: reverse;
+        animation: page-note-sweep 12s linear infinite;
       }
       #${PAGE_NOTE_ALERT_ID},
       #${PAGE_NOTE_EDITOR_ID} {
@@ -3443,19 +3428,11 @@ iframe {
         font-size: 11px;
       }
       @keyframes page-note-sweep {
-        0% { transform: translateX(0) rotate(24deg); opacity: 0; }
-        12% { opacity: 1; }
-        88% { opacity: 1; }
-        100% { transform: translateX(720vw) rotate(24deg); opacity: 0; }
-      }
-      @keyframes page-note-border-pulse {
-        from { border-color: rgba(251, 191, 36, 0.58); box-shadow: inset 0 0 14px rgba(251, 191, 36, 0.2); }
-        to { border-color: rgba(255, 255, 255, 0.96); box-shadow: inset 0 0 34px rgba(251, 191, 36, 0.48); }
+        from { background-position: 0 0; }
+        to { background-position: 192px 0; }
       }
       @media (prefers-reduced-motion: reduce) {
-        #${PAGE_NOTE_EFFECT_ID},
-        #${PAGE_NOTE_EFFECT_ID}::before,
-        #${PAGE_NOTE_EFFECT_ID}::after { animation: none !important; }
+        #${PAGE_NOTE_EFFECT_ID}::before { animation: none !important; }
       }
     `;
     (document.head || document.documentElement).appendChild(style);

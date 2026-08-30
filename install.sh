@@ -36,6 +36,7 @@ cat > "${wrapper_path}" <<EOF_WRAPPER
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_addValueChangeListener
 // @connect      127.0.0.1
 // @require      file://${abs_utils_path}
 // ==/UserScript==

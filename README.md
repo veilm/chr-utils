@@ -17,6 +17,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - Right-click list stored in local storage with copy/clear helpers
 - Instagram: periodically unblocks overlays above visible `<video>` elements so native controls remain clickable
 - Optional Vimium-lite navigation:
+  - remains active while the Alt+Shift+Q sidebar and tool panels are open; focused fields and utility-reserved keys still take precedence
   - j/k smooth scrolling with numeric speed prefixes (e.g., 3j, 10k)
   - gg to jump to top, Shift+G to jump to bottom
   - g then j/k for bottom/top

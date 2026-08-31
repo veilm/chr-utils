@@ -2,8 +2,8 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.3.4
-// @description  Global utilities launcher (Alt+Q)
+// @version      0.3.5
+// @description  Global utilities launcher (Alt+Shift+Q)
 // @match        *://*/*
 // @match        file:///*
 // @run-at       document-start
@@ -140,7 +140,7 @@ video::-webkit-media-controls-overlay-enclosure {
   const COMMAND_SERVER_URL = 'http://127.0.0.1:61483/run';
   const TOKEN_VALUE_KEY = 'chr-utils-token';
   const CLIPBOARD_CMD = 'clip -o';
-  const TOGGLE_HINT = 'Alt+Q or Alt+Shift+[';
+  const TOGGLE_HINT = 'Alt+Shift+Q or Alt+Shift+[';
   const RIGHT_CLICK_LIST_KEY = 'userscript-utils:right-click-list';
   const RIGHT_CLICK_MODE_KEY = 'userscript-utils:right-click-mode';
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
@@ -5310,7 +5310,7 @@ iframe {
     if (event.repeat) return;
     if (handleCommandPromptKeyDown(event)) return;
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
-    if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q') {
+    if (event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q') {
       consumeUtilityKeyDown(event);
       rememberForcePasteTarget(event.target);
       enterCommandPrompt();
@@ -5358,7 +5358,7 @@ iframe {
       }
     }
     if (shouldIgnoreKeyEvent(event)) return;
-    const isPrimaryMenuToggle = event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q';
+    const isPrimaryMenuToggle = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q';
     const isSecondaryMenuToggle = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === '{' || event.key === '[');
     if (isPrimaryMenuToggle || isSecondaryMenuToggle) {
       consumeUtilityKeyDown(event);

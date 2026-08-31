@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.4.0
+// @version      0.4.1
 // @description  Global utilities launcher (Alt+Shift+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -5787,7 +5787,6 @@ iframe {
       return;
     }
     if (event.altKey || event.ctrlKey || event.metaKey) return;
-    if (menuEl && menuEl.isConnected) return;
     if (!vimiumLiteEnabled) return;
     const consumeNavEvent = () => consumeUtilityKeyDown(event);
 

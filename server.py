@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -39,6 +40,17 @@ class RunRequest(BaseModel):
     timeout: Optional[float] = None
 
 
+class AppendLinesRequest(BaseModel):
+    paths: list[str]
+    line: str
+
+
+def require_token(request: Request) -> None:
+    token = request.headers.get("x-chr-token", "")
+    if not token or token != TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"ok": True}
@@ -46,9 +58,7 @@ async def health() -> dict:
 
 @app.post("/run")
 async def run_command(payload: RunRequest, request: Request) -> JSONResponse:
-    token = request.headers.get("x-chr-token", "")
-    if not token or token != TOKEN:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    require_token(request)
     if not payload.cmd or not payload.cmd.strip():
         raise HTTPException(status_code=400, detail="Missing command")
 
@@ -85,6 +95,37 @@ async def run_command(payload: RunRequest, request: Request) -> JSONResponse:
             "error": None if result.returncode == 0 else "Command failed",
         }
     )
+
+
+@app.post("/append-lines")
+async def append_lines(payload: AppendLinesRequest, request: Request) -> dict:
+    require_token(request)
+    paths = list(dict.fromkeys(path.strip() for path in payload.paths if path.strip()))
+    if not paths:
+        raise HTTPException(status_code=400, detail="At least one file path is required")
+    if len(paths) > 50:
+        raise HTTPException(status_code=400, detail="Too many file paths")
+    if "\x00" in payload.line or "\n" in payload.line or "\r" in payload.line:
+        raise HTTPException(status_code=400, detail="The appended value must be one line")
+
+    resolved: list[Path] = []
+    for raw_path in paths:
+        if "\x00" in raw_path:
+            raise HTTPException(status_code=400, detail="Invalid file path")
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            raise HTTPException(status_code=400, detail=f"File path must be absolute: {raw_path}")
+        if not path.parent.is_dir():
+            raise HTTPException(status_code=400, detail=f"Parent directory does not exist: {path.parent}")
+        resolved.append(path)
+
+    try:
+        for path in resolved:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(f"{payload.line}\n")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to append URL: {exc}") from exc
+    return {"ok": True, "paths": [str(path) for path in resolved]}
 
 
 if __name__ == "__main__":

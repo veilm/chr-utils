@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.3.5
+// @version      0.4.0
 // @description  Global utilities launcher (Alt+Shift+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -136,8 +136,11 @@ video::-webkit-media-controls-overlay-enclosure {
   const STYLE_ID = 'userscript-utils-style';
   const COPY_TOAST_ID = 'userscript-utils-copy-toast';
   const COMMAND_HINT_ID = 'userscript-utils-command-hint';
+  const TOP_PAGE_URL_REQUEST = 'userscript-utils:top-page-url-request:v1';
+  const PAGE_NOTES_CHANGED_MESSAGE = 'userscript-utils:page-notes-changed:v1';
   const COMMAND_HINT_TIMEOUT_MS = 5000;
   const COMMAND_SERVER_URL = 'http://127.0.0.1:61483/run';
+  const APPEND_LINES_SERVER_URL = 'http://127.0.0.1:61483/append-lines';
   const TOKEN_VALUE_KEY = 'chr-utils-token';
   const CLIPBOARD_CMD = 'clip -o';
   const TOGGLE_HINT = 'Alt+Shift+Q or Alt+Shift+[';
@@ -149,6 +152,8 @@ video::-webkit-media-controls-overlay-enclosure {
   const WORKSPACE_STATE_KEY = 'userscript-utils:workspace-state:v1';
   const PAGE_NOTES_KEY = 'userscript-utils:page-notes:v1';
   const PAGE_NOTES_CHANNEL_NAME = 'userscript-utils:page-notes-sync:v1';
+  const NOTE_QUICK_BINDINGS_KEY = 'userscript-utils:note-quick-bindings:v1';
+  const NOTE_QUICK_BINDINGS_CHANNEL_NAME = 'userscript-utils:note-quick-bindings-sync:v1';
   const PAGE_NOTE_STYLE_ID = 'userscript-utils-page-note-style';
   const PAGE_NOTE_ALERT_ID = 'userscript-utils-page-note-alert';
   const PAGE_NOTE_EFFECT_ID = 'userscript-utils-page-note-effect';
@@ -158,6 +163,7 @@ video::-webkit-media-controls-overlay-enclosure {
     mediaManager: 'media-manager',
     linkMonitor: 'link-monitor',
     requestMonitor: 'request-monitor',
+    noteBindings: 'note-bindings',
     xSettings: 'x-settings',
     youtubeVideos: 'youtube-videos'
   });
@@ -349,12 +355,16 @@ iframe {
   let currentDarkMode = DARK_MODE_OFF;
   let workspaceStateCache = null;
   let pageNotes = [];
+  let pageNotePageUrl = window.location.href;
+  let noteQuickBindings = [];
+  let noteQuickBindingsChannel = null;
   let pageNotesChannel = null;
   let pageNotesMenuStatusEl = null;
   let pageNoteDismissedUrl = null;
   let pageNoteAlertCleanup = null;
   let pageNoteEditorCleanup = null;
   let pageNoteRenderTimer = null;
+  let noteBindingsPanelState = null;
   let lastDarkMode = DEFAULT_DARK_MODE;
   let scrollDirection = 0;
   let scrollMultiplier = 1;
@@ -1222,12 +1232,62 @@ iframe {
       if (typeof GM_setValue === 'function') GM_setValue(PAGE_NOTES_KEY, pageNotes);
       else window.localStorage.setItem(PAGE_NOTES_KEY, JSON.stringify(pageNotes));
       if (pageNotesChannel) pageNotesChannel.postMessage(pageNotes);
+      if (!isTopLevelPage()) {
+        window.top.postMessage({ type: PAGE_NOTES_CHANGED_MESSAGE }, '*');
+      }
     } catch (err) {
       console.warn('[page-notes] Failed to save notes:', err);
     }
   };
 
-  const getMatchingPageNotes = (url = window.location.href) => pageNotes
+  const normalizeNoteQuickBinding = (value) => {
+    if (!value || typeof value !== 'object') return null;
+    const key = typeof value.key === 'string' ? value.key.trim().toLowerCase() : '';
+    if (!/^[a-z]$/.test(key)) return null;
+    const note = typeof value.note === 'string' ? value.note.trim() : '';
+    const files = Array.isArray(value.files)
+      ? [...new Set(value.files.map((path) => String(path).trim()).filter(Boolean))]
+      : [];
+    if (!note && !files.length) return null;
+    return {
+      id: typeof value.id === 'string' && value.id ? value.id : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      key,
+      note,
+      files
+    };
+  };
+
+  const loadNoteQuickBindings = () => {
+    try {
+      const stored = typeof GM_getValue === 'function'
+        ? GM_getValue(NOTE_QUICK_BINDINGS_KEY, [])
+        : JSON.parse(window.localStorage.getItem(NOTE_QUICK_BINDINGS_KEY) || '[]');
+      if (!Array.isArray(stored)) return [];
+      const seen = new Set();
+      return stored.map(normalizeNoteQuickBinding).filter((binding) => {
+        if (!binding || seen.has(binding.key)) return false;
+        seen.add(binding.key);
+        return true;
+      });
+    } catch (err) {
+      console.warn('[note-bindings] Failed to load bindings:', err);
+      return [];
+    }
+  };
+
+  const saveNoteQuickBindings = () => {
+    try {
+      if (typeof GM_setValue === 'function') GM_setValue(NOTE_QUICK_BINDINGS_KEY, noteQuickBindings);
+      else window.localStorage.setItem(NOTE_QUICK_BINDINGS_KEY, JSON.stringify(noteQuickBindings));
+      if (noteQuickBindingsChannel) noteQuickBindingsChannel.postMessage(noteQuickBindings);
+    } catch (err) {
+      console.warn('[note-bindings] Failed to save bindings:', err);
+    }
+  };
+
+  const getNoteQuickBinding = (key) => noteQuickBindings.find((binding) => binding.key === String(key || '').toLowerCase()) || null;
+
+  const getMatchingPageNotes = (url = pageNotePageUrl) => pageNotes
     .filter((note) => note.type === 'exact' ? url === note.match : url.startsWith(note.match))
     .sort((a, b) => {
       if (a.type !== b.type) return a.type === 'exact' ? -1 : 1;
@@ -1235,7 +1295,7 @@ iframe {
       return b.updatedAt - a.updatedAt;
     });
 
-  const getExactPageNote = (url = window.location.href) => pageNotes.find((note) => note.type === 'exact' && note.match === url) || null;
+  const getExactPageNote = (url = pageNotePageUrl) => pageNotes.find((note) => note.type === 'exact' && note.match === url) || null;
 
   const updatePageNotesMenuStatus = () => {
     if (!pageNotesMenuStatusEl) return;
@@ -2111,6 +2171,7 @@ iframe {
   rightClickList = loadRightClickList();
   rightClickMode = loadRightClickMode();
   pageNotes = loadPageNotes();
+  noteQuickBindings = loadNoteQuickBindings();
   vimiumLiteEnabled = loadVimiumLiteEnabled();
   rightClickPriority = loadRightClickPriority();
   xSettings = loadXSettings();
@@ -2461,9 +2522,17 @@ iframe {
     pageNotesBtn.type = 'button';
     pageNotesBtn.className = 'utils-btn';
     pageNotesBtn.textContent = 'Add or edit page note';
-    pageNotesBtn.addEventListener('click', () => openPageNoteEditor(getExactPageNote()));
+    pageNotesBtn.addEventListener('click', () => openCurrentPageNoteEditor());
+    const noteBindingsBtn = document.createElement('button');
+    noteBindingsBtn.type = 'button';
+    noteBindingsBtn.className = 'utils-btn secondary';
+    noteBindingsBtn.textContent = 'Global note binding settings';
+    noteBindingsBtn.addEventListener('click', () => openNoteBindingSettingsPanel());
+    const pageNotesButtons = document.createElement('div');
+    pageNotesButtons.className = 'utils-btn-row';
+    pageNotesButtons.append(pageNotesBtn, noteBindingsBtn);
     pageNotesMenuStatusEl = document.createElement('p');
-    pageNotesSection.append(pageNotesTitle, pageNotesBtn, pageNotesMenuStatusEl);
+    pageNotesSection.append(pageNotesTitle, pageNotesButtons, pageNotesMenuStatusEl);
     updatePageNotesMenuStatus();
 
     const rightClickSection = document.createElement('div');
@@ -2823,7 +2892,7 @@ iframe {
     label.textContent = 'Command';
     hint.appendChild(label);
 
-    for (const [key, description] of [
+    const commandItems = new Map([
       ['N', 'Notepad'],
       ['V', 'Vimium Lite'],
       ['L', 'Copy links'],
@@ -2831,7 +2900,14 @@ iframe {
       ['P', 'Force paste'],
       ['M', 'Mark page'],
       ['Esc', 'Cancel']
-    ]) {
+    ]);
+    for (const binding of noteQuickBindings) {
+      const description = binding.note
+        ? `Note: ${binding.note}`
+        : `Append URL to ${binding.files.length} file${binding.files.length === 1 ? '' : 's'}`;
+      commandItems.set(binding.key.toUpperCase(), description);
+    }
+    for (const [key, description] of commandItems) {
       const item = document.createElement('span');
       item.className = 'utils-command-hint-item';
       const keycap = document.createElement('kbd');
@@ -2865,6 +2941,11 @@ iframe {
     consumeUtilityKeyDown(event);
 
     const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
+    const customBinding = getNoteQuickBinding(lowerKey);
+    if (customBinding) {
+      executeNoteQuickBinding(customBinding);
+      return true;
+    }
     if (lowerKey === 'v') {
       toggleVimiumLite({ persist: false, feedback: true });
       return true;
@@ -3172,7 +3253,55 @@ iframe {
     return '';
   };
 
-  const runLocalCommand = (cmd, timeoutMs) => new Promise((resolve, reject) => {
+  const isTopLevelPage = () => {
+    try {
+      return window.top === window;
+    } catch {
+      return false;
+    }
+  };
+
+  if (isTopLevelPage()) {
+    window.addEventListener('message', (event) => {
+      if (event.data?.type === TOP_PAGE_URL_REQUEST && event.ports?.[0]) {
+        event.ports[0].postMessage({ url: window.location.href });
+        return;
+      }
+      if (event.data?.type === PAGE_NOTES_CHANGED_MESSAGE && event.source !== window) {
+        pageNotes = loadPageNotes();
+        pageNotePageUrl = window.location.href;
+        pageNoteDismissedUrl = null;
+        updatePageNotesMenuStatus();
+        if (!document.getElementById(PAGE_NOTE_EDITOR_ID)) renderPageNoteAlert({ force: true });
+      }
+    });
+  }
+
+  const getTopLevelPageUrl = () => {
+    if (isTopLevelPage() || typeof MessageChannel !== 'function') return Promise.resolve(window.location.href);
+    return new Promise((resolve) => {
+      const channel = new MessageChannel();
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        channel.port1.close();
+        const candidate = typeof value === 'string' ? value.trim() : '';
+        resolve(candidate || document.referrer || window.location.href);
+      };
+      const timer = window.setTimeout(() => finish(''), 500);
+      channel.port1.addEventListener('message', (event) => finish(event.data?.url));
+      channel.port1.start();
+      try {
+        window.top.postMessage({ type: TOP_PAGE_URL_REQUEST }, '*', [channel.port2]);
+      } catch {
+        finish('');
+      }
+    });
+  };
+
+  const postLocalJson = (url, payload, timeoutMs) => new Promise((resolve, reject) => {
     if (typeof GM_xmlhttpRequest !== 'function') {
       reject(new Error('GM_xmlhttpRequest not available'));
       return;
@@ -3182,23 +3311,20 @@ iframe {
       reject(new Error('Missing auth token'));
       return;
     }
-    const payload = { cmd };
-    if (Number.isFinite(timeoutMs)) {
-      payload.timeout = Math.max(0, timeoutMs / 1000);
-    }
     GM_xmlhttpRequest({
       method: 'POST',
-      url: COMMAND_SERVER_URL,
+      url,
       headers: {
         'Content-Type': 'application/json',
         'X-CHR-Token': token
       },
       data: JSON.stringify(payload),
+      timeout: Number.isFinite(timeoutMs) ? timeoutMs : undefined,
       onload: (response) => {
         try {
           const parsed = JSON.parse(response.responseText || '{}');
           if (!parsed.ok) {
-            const message = parsed.error || `Command failed (status ${response.status})`;
+            const message = parsed.error || parsed.detail || `Request failed (status ${response.status})`;
             reject(new Error(message));
             return;
           }
@@ -3215,6 +3341,18 @@ iframe {
       }
     });
   });
+
+  const runLocalCommand = (cmd, timeoutMs) => {
+    const payload = { cmd };
+    if (Number.isFinite(timeoutMs)) payload.timeout = Math.max(0, timeoutMs / 1000);
+    return postLocalJson(COMMAND_SERVER_URL, payload, timeoutMs);
+  };
+
+  const appendUrlToFiles = (url, paths) => postLocalJson(
+    APPEND_LINES_SERVER_URL,
+    { line: url, paths },
+    3000
+  );
 
   const createForcedInputEvent = () => {
     try {
@@ -3480,10 +3618,11 @@ iframe {
   const renderPageNoteAlert = ({ force = false } = {}) => {
     if (!document.body) return;
     removePageNoteAlertVisuals();
+    if (!isTopLevelPage()) return;
     updatePageNotesMenuStatus();
     const matches = getMatchingPageNotes();
     if (!matches.length) return;
-    if (!force && pageNoteDismissedUrl === window.location.href) return;
+    if (!force && pageNoteDismissedUrl === pageNotePageUrl) return;
     ensurePageNoteStyle();
 
     const effect = document.createElement('div');
@@ -3504,7 +3643,7 @@ iframe {
     closeButton.textContent = '\u2715';
     closeButton.title = 'Dismiss this alert for the current page load';
     closeButton.addEventListener('click', () => {
-      pageNoteDismissedUrl = window.location.href;
+      pageNoteDismissedUrl = pageNotePageUrl;
       removePageNoteAlertVisuals();
     });
     header.append(title, closeButton);
@@ -3543,28 +3682,67 @@ iframe {
     pageNoteAlertCleanup = enableDraggablePanel(alert, header);
   };
 
-  const markOrEditCurrentPage = () => {
+  const saveExactPageNote = (url, text) => {
+    pageNotePageUrl = url;
+    const now = Math.floor(Date.now() / 1000);
+    const existing = getExactPageNote(url);
+    if (existing) {
+      existing.text = text;
+      existing.updatedAt = now;
+    } else {
+      pageNotes.push({
+        id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        type: 'exact',
+        match: url,
+        text,
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+    savePageNotes();
+    pageNoteDismissedUrl = null;
+    updatePageNotesMenuStatus();
+    renderPageNoteAlert({ force: true });
+    return getExactPageNote(url);
+  };
+
+  const openCurrentPageNoteEditor = async () => {
+    pageNotePageUrl = await getTopLevelPageUrl();
+    openPageNoteEditor(getExactPageNote());
+  };
+
+  const markOrEditCurrentPage = async () => {
+    pageNotePageUrl = await getTopLevelPageUrl();
     const existing = getExactPageNote();
     if (existing) {
       openPageNoteEditor(existing);
       return;
     }
-    const now = Math.floor(Date.now() / 1000);
-    pageNotes.push({
-      id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      type: 'exact',
-      match: window.location.href,
-      text: 'done',
-      createdAt: now,
-      updatedAt: now
-    });
-    savePageNotes();
-    pageNoteDismissedUrl = null;
-    updatePageNotesMenuStatus();
-    renderPageNoteAlert({ force: true });
+    saveExactPageNote(pageNotePageUrl, 'done');
     showCopyToast('Page marked done.');
+  };
+
+  const executeNoteQuickBinding = async (binding) => {
+    const url = await getTopLevelPageUrl();
+    pageNotePageUrl = url;
+    const noteSaved = Boolean(binding.note);
+    if (noteSaved) saveExactPageNote(url, binding.note);
+    if (!binding.files.length) {
+      showCopyToast(`${binding.key.toUpperCase()}: note saved.`);
+      return;
+    }
+    try {
+      await appendUrlToFiles(url, binding.files);
+      const fileSummary = `URL appended to ${binding.files.length} file${binding.files.length === 1 ? '' : 's'}.`;
+      showCopyToast(noteSaved ? `${binding.key.toUpperCase()}: note saved; ${fileSummary}` : `${binding.key.toUpperCase()}: ${fileSummary}`);
+    } catch (err) {
+      showCopyToast(noteSaved
+        ? `${binding.key.toUpperCase()}: note saved; file append failed.`
+        : `${binding.key.toUpperCase()}: file append failed.`);
+      console.warn('[note-bindings] Failed to append URL:', err);
+    }
   };
 
   const openPageNoteEditor = (note = null) => {
@@ -3608,7 +3786,7 @@ iframe {
     matchLabel.textContent = 'Match';
     const matchInput = document.createElement('input');
     matchInput.type = 'text';
-    matchInput.value = note ? note.match : window.location.href;
+    matchInput.value = note ? note.match : pageNotePageUrl;
     const help = document.createElement('div');
     help.className = 'page-note-help';
     help.textContent = 'Enter saves. An empty note saves as “done”. Shift+Enter inserts a newline. Prefix matching is a literal starts-with rule.';
@@ -3687,6 +3865,240 @@ iframe {
     document.body.appendChild(editor);
     pageNoteEditorCleanup = enableDraggablePanel(editor, header);
     window.setTimeout(() => textInput.focus(), 0);
+  };
+
+  const closeNoteBindingSettingsPanel = ({ remember = true } = {}) => {
+    if (!noteBindingsPanelState) {
+      if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.noteBindings, false);
+      return;
+    }
+    const { overlay, style, detachDrag } = noteBindingsPanelState;
+    if (typeof detachDrag === 'function') detachDrag();
+    overlay?.remove();
+    style?.remove();
+    noteBindingsPanelState = null;
+    if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.noteBindings, false);
+  };
+
+  const openNoteBindingSettingsPanel = () => {
+    const OVERLAY_ID = 'userscript-utils-note-bindings';
+    const STYLE_ID = 'userscript-utils-note-bindings-style';
+    if (noteBindingsPanelState?.overlay?.isConnected) return;
+    closeNoteBindingSettingsPanel({ remember: false });
+
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      #${OVERLAY_ID} {
+        position: fixed;
+        top: 18px;
+        left: 18px;
+        width: min(680px, calc(100vw - 36px));
+        max-height: calc(100vh - 36px);
+        overflow: auto;
+        z-index: 2147483647;
+        box-sizing: border-box;
+        padding: 13px 14px 14px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(13, 13, 13, 0.98);
+        color: #f2f2f2;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65);
+        font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+      #${OVERLAY_ID} .note-bindings-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 8px;
+        cursor: grab;
+        user-select: none;
+      }
+      #${OVERLAY_ID} .note-bindings-title { font-size: 17px; font-weight: 700; }
+      #${OVERLAY_ID} .note-bindings-close {
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: #f87171;
+        cursor: pointer;
+        font: 20px/1 system-ui, sans-serif;
+      }
+      #${OVERLAY_ID} .note-bindings-help { margin: 0 0 10px; color: #b8b8b8; }
+      #${OVERLAY_ID} .note-binding-row {
+        display: grid;
+        grid-template-columns: 72px minmax(150px, 1fr) minmax(190px, 1.25fr) auto;
+        gap: 8px;
+        align-items: end;
+        margin-top: 8px;
+        padding: 9px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.035);
+      }
+      #${OVERLAY_ID} label { display: block; color: #c8c8c8; font-size: 11px; font-weight: 650; }
+      #${OVERLAY_ID} input,
+      #${OVERLAY_ID} textarea {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 0;
+        padding: 7px 8px;
+        background: #080808;
+        color: #f7f7f7;
+        font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+      #${OVERLAY_ID} textarea { min-height: 58px; resize: vertical; }
+      #${OVERLAY_ID} button.note-bindings-button {
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 0;
+        padding: 7px 10px;
+        background: #292929;
+        color: #f3f3f3;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 650;
+      }
+      #${OVERLAY_ID} .note-binding-remove { color: #fca5a5; }
+      #${OVERLAY_ID} .note-bindings-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+      #${OVERLAY_ID} .note-bindings-status { margin-top: 8px; color: #fca5a5; min-height: 1.4em; }
+      @media (max-width: 680px) {
+        #${OVERLAY_ID} .note-binding-row { grid-template-columns: 64px 1fr auto; }
+        #${OVERLAY_ID} .note-binding-files { grid-column: 1 / -1; }
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+
+    const overlay = document.createElement('div');
+    overlay.id = OVERLAY_ID;
+    const header = document.createElement('div');
+    header.className = 'note-bindings-header';
+    const title = document.createElement('div');
+    title.className = 'note-bindings-title';
+    title.textContent = 'Global Note Bindings';
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'note-bindings-close';
+    closeButton.textContent = '\u2715';
+    closeButton.addEventListener('click', () => closeNoteBindingSettingsPanel());
+    header.append(title, closeButton);
+
+    const help = document.createElement('p');
+    help.className = 'note-bindings-help';
+    help.textContent = 'Choose one letter. Alt+Q then that letter can save an exact page note, append the page URL to one or more files, or do both. Custom letters override built-in quick actions.';
+    const rows = document.createElement('div');
+    const status = document.createElement('div');
+    status.className = 'note-bindings-status';
+
+    const addRow = (binding = null) => {
+      const row = document.createElement('div');
+      row.className = 'note-binding-row';
+      row.dataset.bindingId = binding?.id || '';
+
+      const keyLabel = document.createElement('label');
+      keyLabel.textContent = 'Letter';
+      const keyInput = document.createElement('input');
+      keyInput.className = 'note-binding-key';
+      keyInput.type = 'text';
+      keyInput.maxLength = 1;
+      keyInput.placeholder = 'R';
+      keyInput.value = binding?.key?.toUpperCase() || '';
+      keyInput.addEventListener('input', () => {
+        keyInput.value = keyInput.value.replace(/[^a-z]/gi, '').slice(0, 1).toUpperCase();
+      });
+      keyLabel.appendChild(keyInput);
+
+      const noteLabel = document.createElement('label');
+      noteLabel.textContent = 'Note (optional)';
+      const noteInput = document.createElement('input');
+      noteInput.className = 'note-binding-note';
+      noteInput.type = 'text';
+      noteInput.placeholder = 'useless thread';
+      noteInput.value = binding?.note || '';
+      noteLabel.appendChild(noteInput);
+
+      const filesLabel = document.createElement('label');
+      filesLabel.className = 'note-binding-files';
+      filesLabel.textContent = 'Append URL to files (one absolute path per line)';
+      const filesInput = document.createElement('textarea');
+      filesInput.className = 'note-binding-file-list';
+      filesInput.placeholder = '/tmp/zero.txt';
+      filesInput.value = binding?.files?.join('\n') || '';
+      filesLabel.appendChild(filesInput);
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'note-bindings-button note-binding-remove';
+      removeButton.textContent = 'Remove';
+      removeButton.addEventListener('click', () => row.remove());
+      row.append(keyLabel, noteLabel, filesLabel, removeButton);
+      rows.appendChild(row);
+    };
+
+    noteQuickBindings.forEach((binding) => addRow(binding));
+    if (!noteQuickBindings.length) addRow();
+
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.className = 'note-bindings-button';
+    addButton.textContent = 'Add binding';
+    addButton.addEventListener('click', () => addRow());
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'note-bindings-button';
+    saveButton.textContent = 'Save bindings';
+    saveButton.addEventListener('click', () => {
+      const nextBindings = [];
+      const seenKeys = new Set();
+      for (const row of rows.querySelectorAll('.note-binding-row')) {
+        const key = row.querySelector('.note-binding-key').value.trim().toLowerCase();
+        const note = row.querySelector('.note-binding-note').value.trim();
+        const files = [...new Set(row.querySelector('.note-binding-file-list').value
+          .split(/\r?\n/)
+          .map((path) => path.trim())
+          .filter(Boolean))];
+        if (!key && !note && !files.length) continue;
+        if (!/^[a-z]$/.test(key)) {
+          status.textContent = 'Every binding needs one letter from A to Z.';
+          return;
+        }
+        if (seenKeys.has(key)) {
+          status.textContent = `The letter ${key.toUpperCase()} is assigned more than once.`;
+          return;
+        }
+        if (!note && !files.length) {
+          status.textContent = `${key.toUpperCase()} needs a note, at least one file, or both.`;
+          return;
+        }
+        const invalidPath = files.find((path) => !path.startsWith('/') && !path.startsWith('~/'));
+        if (invalidPath) {
+          status.textContent = `File paths must be absolute: ${invalidPath}`;
+          return;
+        }
+        seenKeys.add(key);
+        nextBindings.push({
+          id: row.dataset.bindingId || (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(16).slice(2)}`),
+          key,
+          note,
+          files
+        });
+      }
+      noteQuickBindings = nextBindings;
+      saveNoteQuickBindings();
+      status.style.color = '#86efac';
+      status.textContent = `${noteQuickBindings.length} binding${noteQuickBindings.length === 1 ? '' : 's'} saved globally.`;
+      showCopyToast('Global note bindings saved.');
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'note-bindings-actions';
+    actions.append(addButton, saveButton);
+    overlay.append(header, help, rows, actions, status);
+    document.body.appendChild(overlay);
+    const detachDrag = enableDraggablePanel(overlay, header, { workspaceId: WORKSPACE_PANEL_IDS.noteBindings });
+    noteBindingsPanelState = { overlay, style, detachDrag };
+    setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.noteBindings, true);
   };
 
   const openClipboardUrl = async (openInNewTab) => {
@@ -5335,8 +5747,10 @@ iframe {
     }
     if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'y') {
       consumeUtilityKeyDown(event);
-      copyTextToClipboard(window.location.href || '');
-      showCopyToast('Copied URL!');
+      getTopLevelPageUrl().then((url) => {
+        copyTextToClipboard(url);
+        showCopyToast('Copied URL!');
+      });
       return;
     }
     if (menuEl && menuEl.isConnected) {
@@ -6492,11 +6906,24 @@ iframe {
     if (!document.getElementById(PAGE_NOTE_EDITOR_ID)) renderPageNoteAlert({ force: true });
   };
 
+  const applySyncedNoteQuickBindings = (stored) => {
+    if (!Array.isArray(stored)) return;
+    const seen = new Set();
+    noteQuickBindings = stored.map(normalizeNoteQuickBinding).filter((binding) => {
+      if (!binding || seen.has(binding.key)) return false;
+      seen.add(binding.key);
+      return true;
+    });
+  };
+
   const installPageNotesSync = () => {
     if (typeof GM_addValueChangeListener === 'function') {
       try {
         GM_addValueChangeListener(PAGE_NOTES_KEY, (_key, _oldValue, newValue, remote) => {
           if (remote) applySyncedPageNotes(newValue);
+        });
+        GM_addValueChangeListener(NOTE_QUICK_BINDINGS_KEY, (_key, _oldValue, newValue, remote) => {
+          if (remote) applySyncedNoteQuickBindings(newValue);
         });
       } catch (err) {
         console.warn('[page-notes] Failed to watch userscript storage:', err);
@@ -6506,16 +6933,19 @@ iframe {
       try {
         pageNotesChannel = new BroadcastChannel(PAGE_NOTES_CHANNEL_NAME);
         pageNotesChannel.addEventListener('message', (event) => applySyncedPageNotes(event.data));
+        noteQuickBindingsChannel = new BroadcastChannel(NOTE_QUICK_BINDINGS_CHANNEL_NAME);
+        noteQuickBindingsChannel.addEventListener('message', (event) => applySyncedNoteQuickBindings(event.data));
       } catch (err) {
         console.warn('[page-notes] Failed to open the cross-tab channel:', err);
       }
     }
     window.addEventListener('storage', (event) => {
-      if (event.key !== PAGE_NOTES_KEY || typeof event.newValue !== 'string') return;
+      if (typeof event.newValue !== 'string') return;
       try {
-        applySyncedPageNotes(JSON.parse(event.newValue));
+        if (event.key === PAGE_NOTES_KEY) applySyncedPageNotes(JSON.parse(event.newValue));
+        if (event.key === NOTE_QUICK_BINDINGS_KEY) applySyncedNoteQuickBindings(JSON.parse(event.newValue));
       } catch (err) {
-        console.warn('[page-notes] Failed to read a cross-tab storage update:', err);
+        console.warn('[userscript-utils] Failed to read a cross-tab storage update:', err);
       }
     });
   };
@@ -6525,6 +6955,7 @@ iframe {
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.menu)) setMenuOpen(true, { remember: false });
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.xSettings) && isXHost()) openXSettingsPanel();
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.youtubeVideos) && isYouTubeHost()) openYoutubeVideoPanel();
+    if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.noteBindings)) openNoteBindingSettingsPanel();
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.linkMonitor)) openLinkMonitorPanel();
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.requestMonitor)) openRequestMonitorPanel();
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.mediaManager)) runMediaManager();
@@ -6542,6 +6973,7 @@ iframe {
     const nextUrl = window.location.href;
     if (nextUrl === lastWorkspaceUrl) return;
     lastWorkspaceUrl = nextUrl;
+    pageNotePageUrl = nextUrl;
     pageNoteDismissedUrl = null;
     closePageNoteEditor({ restoreAlert: false });
     removePageNoteAlertVisuals();
@@ -6550,6 +6982,7 @@ iframe {
     setMenuOpen(false, { remember: false });
     closeXSettingsPanel({ remember: false });
     closeYoutubeVideoPanel({ remember: false });
+    closeNoteBindingSettingsPanel({ remember: false });
     closeLinkMonitorPanel({ remember: false });
     closeRequestMonitorPanel({ remember: false });
     requestMonitorEntries.length = 0;

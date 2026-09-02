@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.4.1
+// @version      0.4.2
 // @description  Global utilities launcher (Alt+Shift+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -3867,6 +3867,75 @@ iframe {
     window.setTimeout(() => textInput.focus(), 0);
   };
 
+  const downloadPageNotesJson = () => {
+    const payload = {
+      format: 'chr-utils-page-notes',
+      version: 1,
+      exportedAt: Math.floor(Date.now() / 1000),
+      notes: pageNotes.map((note) => ({ ...note }))
+    };
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `chr-utils-page-notes-${payload.exportedAt}.json`;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return pageNotes.length;
+  };
+
+  const importPageNotes = (storedNotes, { overwrite = false } = {}) => {
+    if (!Array.isArray(storedNotes)) throw new Error('The JSON file does not contain a notes array.');
+    const nextNotes = pageNotes.map((note) => ({ ...note }));
+    const ruleIndex = new Map(nextNotes.map((note, index) => [`${note.type}\u0000${note.match}`, index]));
+    const usedIds = new Set(nextNotes.map((note) => note.id));
+    const result = { added: 0, overwritten: 0, skipped: 0, invalid: 0 };
+
+    for (const rawNote of storedNotes) {
+      const imported = normalizePageNote(rawNote);
+      if (!imported) {
+        result.invalid += 1;
+        continue;
+      }
+      const ruleKey = `${imported.type}\u0000${imported.match}`;
+      const existingIndex = ruleIndex.get(ruleKey);
+      if (existingIndex !== undefined) {
+        if (!overwrite) {
+          result.skipped += 1;
+          continue;
+        }
+        const existing = nextNotes[existingIndex];
+        nextNotes[existingIndex] = {
+          ...imported,
+          id: existing.id
+        };
+        result.overwritten += 1;
+        continue;
+      }
+      if (usedIds.has(imported.id)) {
+        imported.id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      }
+      usedIds.add(imported.id);
+      ruleIndex.set(ruleKey, nextNotes.length);
+      nextNotes.push(imported);
+      result.added += 1;
+    }
+
+    if (result.added || result.overwritten) {
+      pageNotes = nextNotes;
+      savePageNotes();
+      pageNoteDismissedUrl = null;
+      updatePageNotesMenuStatus();
+      renderPageNoteAlert({ force: true });
+    }
+    return result;
+  };
+
   const closeNoteBindingSettingsPanel = ({ remember = true } = {}) => {
     if (!noteBindingsPanelState) {
       if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.noteBindings, false);
@@ -3936,7 +4005,8 @@ iframe {
       }
       #${OVERLAY_ID} label { display: block; color: #c8c8c8; font-size: 11px; font-weight: 650; }
       #${OVERLAY_ID} input,
-      #${OVERLAY_ID} textarea {
+      #${OVERLAY_ID} textarea,
+      #${OVERLAY_ID} select {
         width: 100%;
         box-sizing: border-box;
         margin-top: 4px;
@@ -3961,6 +4031,16 @@ iframe {
       #${OVERLAY_ID} .note-binding-remove { color: #fca5a5; }
       #${OVERLAY_ID} .note-bindings-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
       #${OVERLAY_ID} .note-bindings-status { margin-top: 8px; color: #fca5a5; min-height: 1.4em; }
+      #${OVERLAY_ID} .note-backup {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      #${OVERLAY_ID} .note-backup-title { margin: 0 0 4px; font-size: 14px; }
+      #${OVERLAY_ID} .note-backup-help { margin: 0 0 9px; color: #b8b8b8; }
+      #${OVERLAY_ID} .note-backup-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 7px; }
+      #${OVERLAY_ID} .note-backup-conflict { min-width: 210px; }
+      #${OVERLAY_ID} .note-backup-file { display: none; }
       @media (max-width: 680px) {
         #${OVERLAY_ID} .note-binding-row { grid-template-columns: 64px 1fr auto; }
         #${OVERLAY_ID} .note-binding-files { grid-column: 1 / -1; }
@@ -4094,7 +4174,79 @@ iframe {
     const actions = document.createElement('div');
     actions.className = 'note-bindings-actions';
     actions.append(addButton, saveButton);
-    overlay.append(header, help, rows, actions, status);
+
+    const backupSection = document.createElement('section');
+    backupSection.className = 'note-backup';
+    const backupTitle = document.createElement('h2');
+    backupTitle.className = 'note-backup-title';
+    backupTitle.textContent = 'Page Note Import / Export';
+    const backupHelp = document.createElement('p');
+    backupHelp.className = 'note-backup-help';
+    backupHelp.textContent = 'Export every exact and prefix page note, or import a chr-utils JSON backup.';
+    const backupControls = document.createElement('div');
+    backupControls.className = 'note-backup-controls';
+    const exportButton = document.createElement('button');
+    exportButton.type = 'button';
+    exportButton.className = 'note-bindings-button';
+    exportButton.textContent = 'Export notes JSON';
+    exportButton.addEventListener('click', () => {
+      const count = downloadPageNotesJson();
+      showCopyToast(`Exported ${count} page note${count === 1 ? '' : 's'}.`);
+    });
+
+    const conflictLabel = document.createElement('label');
+    conflictLabel.className = 'note-backup-conflict';
+    conflictLabel.textContent = 'Import conflicts';
+    const conflictSelect = document.createElement('select');
+    const keepOption = document.createElement('option');
+    keepOption.value = 'keep';
+    keepOption.textContent = 'Keep current notes (default)';
+    const overwriteOption = document.createElement('option');
+    overwriteOption.value = 'overwrite';
+    overwriteOption.textContent = 'Overwrite current notes';
+    conflictSelect.append(keepOption, overwriteOption);
+    conflictSelect.value = 'keep';
+    conflictLabel.appendChild(conflictSelect);
+
+    const importButton = document.createElement('button');
+    importButton.type = 'button';
+    importButton.className = 'note-bindings-button';
+    importButton.textContent = 'Import notes JSON';
+    const fileInput = document.createElement('input');
+    fileInput.className = 'note-backup-file';
+    fileInput.type = 'file';
+    fileInput.accept = 'application/json,.json';
+    importButton.addEventListener('click', () => fileInput.click());
+    const importStatus = document.createElement('div');
+    importStatus.className = 'note-bindings-status';
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      importStatus.style.color = '#fca5a5';
+      try {
+        if (file.size > 10 * 1024 * 1024) throw new Error('The import file is larger than 10 MB.');
+        const parsed = JSON.parse(await file.text());
+        const storedNotes = Array.isArray(parsed) ? parsed : parsed?.notes;
+        const result = importPageNotes(storedNotes, { overwrite: conflictSelect.value === 'overwrite' });
+        const parts = [
+          `${result.added} added`,
+          `${result.overwritten} overwritten`,
+          `${result.skipped} kept current`
+        ];
+        if (result.invalid) parts.push(`${result.invalid} invalid skipped`);
+        importStatus.style.color = '#86efac';
+        importStatus.textContent = `Import complete: ${parts.join(', ')}.`;
+        showCopyToast('Page note import complete.');
+      } catch (err) {
+        importStatus.textContent = err instanceof Error ? err.message : 'Could not import that JSON file.';
+      } finally {
+        fileInput.value = '';
+      }
+    });
+    backupControls.append(exportButton, conflictLabel, importButton, fileInput);
+    backupSection.append(backupTitle, backupHelp, backupControls, importStatus);
+
+    overlay.append(header, help, rows, actions, status, backupSection);
     document.body.appendChild(overlay);
     const detachDrag = enableDraggablePanel(overlay, header, { workspaceId: WORKSPACE_PANEL_IDS.noteBindings });
     noteBindingsPanelState = { overlay, style, detachDrag };

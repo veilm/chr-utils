@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.5.1
+// @version      0.5.2
 // @description  Global utilities launcher (Alt+Shift+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -138,6 +138,9 @@ video::-webkit-media-controls-overlay-enclosure {
   const COMMAND_HINT_ID = 'userscript-utils-command-hint';
   const TOP_PAGE_URL_REQUEST = 'userscript-utils:top-page-url-request:v1';
   const PAGE_NOTES_CHANGED_MESSAGE = 'userscript-utils:page-notes-changed:v1';
+  const TOP_COMMAND_PROMPT_REQUEST = 'userscript-utils:top-command-prompt-request:v1';
+  const TOP_COMMAND_KEY_REQUEST = 'userscript-utils:top-command-key-request:v1';
+  const TOP_MENU_TOGGLE_REQUEST = 'userscript-utils:top-menu-toggle-request:v1';
   const COMMAND_HINT_TIMEOUT_MS = 5000;
   const COMMAND_SERVER_URL = 'http://127.0.0.1:61483/run';
   const APPEND_LINES_SERVER_URL = 'http://127.0.0.1:61483/append-lines';
@@ -1214,7 +1217,7 @@ iframe {
     };
   };
 
-  const normalizeExactPageNoteUrl = (value) => {
+  const normalizePageNoteUrl = (value) => {
     const raw = String(value || '').trim();
     if (!raw) return raw;
     try {
@@ -1226,7 +1229,7 @@ iframe {
     }
   };
 
-  const getPageNoteRuleKey = (type, match) => `${type}\u0000${type === 'exact' ? normalizeExactPageNoteUrl(match) : match}`;
+  const getPageNoteRuleKey = (type, match) => `${type}\u0000${normalizePageNoteUrl(match)}`;
 
   const loadPageNotes = () => {
     try {
@@ -1301,19 +1304,22 @@ iframe {
 
   const getNoteQuickBinding = (key) => noteQuickBindings.find((binding) => binding.key === String(key || '')) || null;
 
-  const getMatchingPageNotes = (url = pageNotePageUrl) => pageNotes
-    .filter((note) => note.type === 'exact'
-      ? normalizeExactPageNoteUrl(url) === normalizeExactPageNoteUrl(note.match)
-      : url.startsWith(note.match))
-    .sort((a, b) => {
-      if (a.type !== b.type) return a.type === 'exact' ? -1 : 1;
-      if (a.type === 'prefix' && a.match.length !== b.match.length) return b.match.length - a.match.length;
-      return b.updatedAt - a.updatedAt;
-    });
+  const getMatchingPageNotes = (url = pageNotePageUrl) => {
+    const normalizedUrl = normalizePageNoteUrl(url);
+    return pageNotes
+      .filter((note) => note.type === 'exact'
+        ? normalizedUrl === normalizePageNoteUrl(note.match)
+        : normalizedUrl.startsWith(normalizePageNoteUrl(note.match)))
+      .sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'exact' ? -1 : 1;
+        if (a.type === 'prefix' && a.match.length !== b.match.length) return b.match.length - a.match.length;
+        return b.updatedAt - a.updatedAt;
+      });
+  };
 
   const getExactPageNote = (url = pageNotePageUrl) => {
-    const normalizedUrl = normalizeExactPageNoteUrl(url);
-    return pageNotes.find((note) => note.type === 'exact' && normalizeExactPageNoteUrl(note.match) === normalizedUrl) || null;
+    const normalizedUrl = normalizePageNoteUrl(url);
+    return pageNotes.find((note) => note.type === 'exact' && normalizePageNoteUrl(note.match) === normalizedUrl) || null;
   };
 
   const updatePageNotesMenuStatus = () => {
@@ -2940,18 +2946,68 @@ iframe {
     document.body.appendChild(hint);
   };
 
-  const enterCommandPrompt = () => {
+  const enterCommandPrompt = ({ render = true } = {}) => {
     commandPromptActive = true;
     if (commandPromptTimer !== null) {
       window.clearTimeout(commandPromptTimer);
     }
-    showCommandHint();
+    if (render) showCommandHint();
     commandPromptTimer = window.setTimeout(() => {
       commandPromptTimer = null;
       if (!commandPromptActive) return;
       commandPromptActive = false;
       dismissCommandHint({ clearTimer: false });
     }, COMMAND_HINT_TIMEOUT_MS);
+  };
+
+  const runCommandKey = (commandKey) => {
+    const customBinding = getNoteQuickBinding(commandKey);
+    if (customBinding) {
+      executeNoteQuickBinding(customBinding);
+      return;
+    }
+    if (commandKey === 'v') {
+      toggleVimiumLite({ persist: false, feedback: true });
+      return;
+    }
+    if (commandKey === 'l') {
+      copyAllPageLinks();
+      return;
+    }
+    if (commandKey === 'i') {
+      setRightClickPriority(RIGHT_CLICK_PRIORITY_IMAGE);
+      setRightClickMode(RIGHT_CLICK_MODE_COPY);
+      showCopyToast('Right-click: copy image address');
+      return;
+    }
+    if (commandKey === 'n') {
+      toggleFloatingComposer();
+      return;
+    }
+    if (commandKey === 'p') {
+      forcePasteFromClipboard();
+      return;
+    }
+    if (commandKey === 'm') {
+      markOrEditCurrentPage();
+      return;
+    }
+    if (commandKey === 'M') {
+      openPrefixPageNoteEditor();
+      return;
+    }
+    if (commandKey === 'Escape') {
+      showCopyToast('Command cancelled');
+      return;
+    }
+    showCopyToast(`Unknown command: ${commandKey}`);
+  };
+
+  const handleForwardedCommandKey = (commandKey) => {
+    if (!commandPromptActive) return;
+    commandPromptActive = false;
+    dismissCommandHint();
+    runCommandKey(commandKey);
   };
 
   const handleCommandPromptKeyDown = (event) => {
@@ -2965,46 +3021,11 @@ iframe {
     consumeUtilityKeyDown(event);
 
     const commandKey = event.key || '';
-    const customBinding = getNoteQuickBinding(commandKey);
-    if (customBinding) {
-      executeNoteQuickBinding(customBinding);
+    if (!isTopLevelPage()) {
+      window.top.postMessage({ type: TOP_COMMAND_KEY_REQUEST, key: commandKey }, '*');
       return true;
     }
-    if (commandKey === 'v') {
-      toggleVimiumLite({ persist: false, feedback: true });
-      return true;
-    }
-    if (commandKey === 'l') {
-      copyAllPageLinks();
-      return true;
-    }
-    if (commandKey === 'i') {
-      setRightClickPriority(RIGHT_CLICK_PRIORITY_IMAGE);
-      setRightClickMode(RIGHT_CLICK_MODE_COPY);
-      showCopyToast('Right-click: copy image address');
-      return true;
-    }
-    if (commandKey === 'n') {
-      toggleFloatingComposer();
-      return true;
-    }
-    if (commandKey === 'p') {
-      forcePasteFromClipboard();
-      return true;
-    }
-    if (commandKey === 'm') {
-      markOrEditCurrentPage();
-      return true;
-    }
-    if (commandKey === 'M') {
-      openPrefixPageNoteEditor();
-      return true;
-    }
-    if (commandKey === 'Escape') {
-      showCopyToast('Command cancelled');
-      return true;
-    }
-    showCopyToast(`Unknown command: ${event.key || ''}`);
+    runCommandKey(commandKey);
     return true;
   };
 
@@ -3301,6 +3322,18 @@ iframe {
         pageNoteDismissedUrl = null;
         updatePageNotesMenuStatus();
         if (!document.getElementById(PAGE_NOTE_EDITOR_ID)) renderPageNoteAlert({ force: true });
+        return;
+      }
+      if (event.source !== window && event.data?.type === TOP_COMMAND_PROMPT_REQUEST) {
+        enterCommandPrompt();
+        return;
+      }
+      if (event.source !== window && event.data?.type === TOP_COMMAND_KEY_REQUEST) {
+        handleForwardedCommandKey(typeof event.data.key === 'string' ? event.data.key : '');
+        return;
+      }
+      if (event.source !== window && event.data?.type === TOP_MENU_TOGGLE_REQUEST) {
+        setMenuOpen(!menuEl || !menuEl.isConnected);
       }
     });
   }
@@ -3650,7 +3683,7 @@ iframe {
     updatePageNotesMenuStatus();
     const matches = getMatchingPageNotes();
     if (!matches.length) return;
-    if (!force && normalizeExactPageNoteUrl(pageNoteDismissedUrl) === normalizeExactPageNoteUrl(pageNotePageUrl)) return;
+    if (!force && normalizePageNoteUrl(pageNoteDismissedUrl) === normalizePageNoteUrl(pageNotePageUrl)) return;
     ensurePageNoteStyle();
 
     const effect = document.createElement('div');
@@ -3671,7 +3704,7 @@ iframe {
     closeButton.textContent = '\u2715';
     closeButton.title = 'Dismiss this alert for the current page load';
     closeButton.addEventListener('click', () => {
-      pageNoteDismissedUrl = normalizeExactPageNoteUrl(pageNotePageUrl);
+      pageNoteDismissedUrl = normalizePageNoteUrl(pageNotePageUrl);
       removePageNoteAlertVisuals();
     });
     header.append(title, closeButton);
@@ -5912,7 +5945,23 @@ iframe {
     if (event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q') {
       consumeUtilityKeyDown(event);
       rememberForcePasteTarget(event.target);
-      enterCommandPrompt();
+      if (isTopLevelPage()) {
+        enterCommandPrompt();
+      } else {
+        enterCommandPrompt({ render: false });
+        window.top.postMessage({ type: TOP_COMMAND_PROMPT_REQUEST }, '*');
+      }
+      return;
+    }
+    const isPrimaryMenuToggle = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q';
+    const isSecondaryMenuToggle = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === '{' || event.key === '[');
+    if (isPrimaryMenuToggle || isSecondaryMenuToggle) {
+      consumeUtilityKeyDown(event);
+      if (isTopLevelPage()) {
+        setMenuOpen(!menuEl || !menuEl.isConnected);
+      } else {
+        window.top.postMessage({ type: TOP_MENU_TOGGLE_REQUEST }, '*');
+      }
       return;
     }
     if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'a') {
@@ -5959,12 +6008,6 @@ iframe {
       }
     }
     if (shouldIgnoreKeyEvent(event)) return;
-    const isPrimaryMenuToggle = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'q';
-    const isSecondaryMenuToggle = event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === '{' || event.key === '[');
-    if (isPrimaryMenuToggle || isSecondaryMenuToggle) {
-      consumeUtilityKeyDown(event);
-      setMenuOpen(!menuEl || !menuEl.isConnected);
-    }
   };
 
   const onKeyDownNav = (event) => {
@@ -6087,9 +6130,9 @@ iframe {
   document.addEventListener('focusin', (event) => {
     rememberForcePasteTarget(event.target);
   }, true);
-  document.addEventListener('keydown', onKeyDown, true);
-  document.addEventListener('keydown', onKeyDownNav, true);
-  document.addEventListener('keyup', onKeyUpNav, true);
+  window.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('keydown', onKeyDownNav, true);
+  window.addEventListener('keyup', onKeyUpNav, true);
   document.addEventListener('pointerdown', (event) => {
     lastPointerTarget = event.target;
   }, true);

@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.5.0
+// @version      0.5.1
 // @description  Global utilities launcher (Alt+Shift+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -1214,6 +1214,20 @@ iframe {
     };
   };
 
+  const normalizeExactPageNoteUrl = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return raw;
+    try {
+      const parsed = new URL(raw);
+      if (parsed.pathname.length > 1) parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+      return parsed.href;
+    } catch (err) {
+      return raw.length > 1 ? raw.replace(/\/+$/, '') : raw;
+    }
+  };
+
+  const getPageNoteRuleKey = (type, match) => `${type}\u0000${type === 'exact' ? normalizeExactPageNoteUrl(match) : match}`;
+
   const loadPageNotes = () => {
     try {
       const stored = typeof GM_getValue === 'function'
@@ -1288,14 +1302,19 @@ iframe {
   const getNoteQuickBinding = (key) => noteQuickBindings.find((binding) => binding.key === String(key || '')) || null;
 
   const getMatchingPageNotes = (url = pageNotePageUrl) => pageNotes
-    .filter((note) => note.type === 'exact' ? url === note.match : url.startsWith(note.match))
+    .filter((note) => note.type === 'exact'
+      ? normalizeExactPageNoteUrl(url) === normalizeExactPageNoteUrl(note.match)
+      : url.startsWith(note.match))
     .sort((a, b) => {
       if (a.type !== b.type) return a.type === 'exact' ? -1 : 1;
       if (a.type === 'prefix' && a.match.length !== b.match.length) return b.match.length - a.match.length;
       return b.updatedAt - a.updatedAt;
     });
 
-  const getExactPageNote = (url = pageNotePageUrl) => pageNotes.find((note) => note.type === 'exact' && note.match === url) || null;
+  const getExactPageNote = (url = pageNotePageUrl) => {
+    const normalizedUrl = normalizeExactPageNoteUrl(url);
+    return pageNotes.find((note) => note.type === 'exact' && normalizeExactPageNoteUrl(note.match) === normalizedUrl) || null;
+  };
 
   const updatePageNotesMenuStatus = () => {
     if (!pageNotesMenuStatusEl) return;
@@ -3631,7 +3650,7 @@ iframe {
     updatePageNotesMenuStatus();
     const matches = getMatchingPageNotes();
     if (!matches.length) return;
-    if (!force && pageNoteDismissedUrl === pageNotePageUrl) return;
+    if (!force && normalizeExactPageNoteUrl(pageNoteDismissedUrl) === normalizeExactPageNoteUrl(pageNotePageUrl)) return;
     ensurePageNoteStyle();
 
     const effect = document.createElement('div');
@@ -3652,7 +3671,7 @@ iframe {
     closeButton.textContent = '\u2715';
     closeButton.title = 'Dismiss this alert for the current page load';
     closeButton.addEventListener('click', () => {
-      pageNoteDismissedUrl = pageNotePageUrl;
+      pageNoteDismissedUrl = normalizeExactPageNoteUrl(pageNotePageUrl);
       removePageNoteAlertVisuals();
     });
     header.append(title, closeButton);
@@ -3837,7 +3856,10 @@ iframe {
       }
       const now = Math.floor(Date.now() / 1000);
       let existing = note ? pageNotes.find((item) => item.id === note.id) : null;
-      if (!existing) existing = pageNotes.find((item) => item.type === type && item.match === match) || null;
+      if (!existing) {
+        const ruleKey = getPageNoteRuleKey(type, match);
+        existing = pageNotes.find((item) => getPageNoteRuleKey(item.type, item.match) === ruleKey) || null;
+      }
       if (existing) {
         existing.type = type;
         existing.match = match;
@@ -3917,7 +3939,7 @@ iframe {
   const importPageNotes = (storedNotes) => {
     if (!Array.isArray(storedNotes)) throw new Error('The JSON file does not contain a notes array.');
     const nextNotes = pageNotes.map((note) => ({ ...note }));
-    const ruleIndex = new Map(nextNotes.map((note, index) => [`${note.type}\u0000${note.match}`, index]));
+    const ruleIndex = new Map(nextNotes.map((note, index) => [getPageNoteRuleKey(note.type, note.match), index]));
     const usedIds = new Set(nextNotes.map((note) => note.id));
     const result = { added: 0, merged: 0, duplicates: 0, invalid: 0 };
 
@@ -3927,7 +3949,7 @@ iframe {
         result.invalid += 1;
         continue;
       }
-      const ruleKey = `${imported.type}\u0000${imported.match}`;
+      const ruleKey = getPageNoteRuleKey(imported.type, imported.match);
       const existingIndex = ruleIndex.get(ruleKey);
       if (existingIndex !== undefined) {
         const existing = nextNotes[existingIndex];

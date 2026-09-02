@@ -934,6 +934,18 @@ iframe {
         color: #f5f5f5;
         font: inherit;
       }
+      #${MENU_ID} .utils-textarea {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 72px;
+        resize: vertical;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 0;
+        padding: 6px 8px;
+        background: #111;
+        color: #f5f5f5;
+        font: inherit;
+      }
       #${MENU_ID} .utils-list-row {
         display: flex;
         align-items: center;
@@ -2456,6 +2468,48 @@ iframe {
     refreshRedditMutedPosts();
   };
 
+  const importRedditMutedUsersText = (text) => {
+    const existingUsers = new Set(redditMutedUsers.map((username) => username.toLowerCase()));
+    let added = 0;
+    let duplicates = 0;
+
+    String(text || '').split(/\r?\n/).forEach((line) => {
+      const username = normalizeRedditUsername(line);
+      if (!username) return;
+      const key = username.toLowerCase();
+      if (existingUsers.has(key)) {
+        duplicates += 1;
+        return;
+      }
+      existingUsers.add(key);
+      redditMutedUsers.push(username);
+      added += 1;
+    });
+
+    if (added) {
+      redditMutedUsers.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+      saveRedditMuteSettings();
+      updateRedditMuteUI();
+      refreshRedditMutedPosts();
+    }
+    return { added, duplicates };
+  };
+
+  const downloadRedditMutedUsersText = () => {
+    const text = redditMutedUsers.length ? `${redditMutedUsers.join('\n')}\n` : '';
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `chr-utils-reddit-muted-users-${Math.floor(Date.now() / 1000)}.txt`;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return redditMutedUsers.length;
+  };
+
   const installRedditMuteMode = () => {
     if (!isRedditHost() || redditMuteObserver) return;
     ensureRedditMuteStyle();
@@ -2721,6 +2775,72 @@ iframe {
     redditMuteInputRow.append(redditMuteInput, redditMuteAddButton);
     const redditMuteDesc = document.createElement('p');
     redditMuteDesc.textContent = 'Replaces feed posts by muted users with a thin placeholder. The list is shared across Reddit and persists after refreshes.';
+    const redditMuteImportInput = document.createElement('textarea');
+    redditMuteImportInput.className = 'utils-textarea';
+    redditMuteImportInput.rows = 4;
+    redditMuteImportInput.placeholder = 'Paste usernames, one per line';
+    redditMuteImportInput.setAttribute('aria-label', 'Reddit usernames to import');
+    const redditMuteTransferControls = document.createElement('div');
+    redditMuteTransferControls.className = 'utils-btn-row';
+    redditMuteTransferControls.style.marginTop = '6px';
+    const redditMutePasteImportButton = document.createElement('button');
+    redditMutePasteImportButton.type = 'button';
+    redditMutePasteImportButton.className = 'utils-btn secondary';
+    redditMutePasteImportButton.textContent = 'Import pasted list';
+    const redditMuteFileImportButton = document.createElement('button');
+    redditMuteFileImportButton.type = 'button';
+    redditMuteFileImportButton.className = 'utils-btn secondary';
+    redditMuteFileImportButton.textContent = 'Import TXT file';
+    const redditMuteFileInput = document.createElement('input');
+    redditMuteFileInput.type = 'file';
+    redditMuteFileInput.accept = 'text/plain,.txt';
+    redditMuteFileInput.style.display = 'none';
+    const redditMuteExportButton = document.createElement('button');
+    redditMuteExportButton.type = 'button';
+    redditMuteExportButton.className = 'utils-btn secondary';
+    redditMuteExportButton.textContent = 'Export TXT file';
+    const redditMuteTransferStatus = document.createElement('p');
+    redditMuteTransferStatus.setAttribute('aria-live', 'polite');
+    const showRedditMuteImportResult = ({ added, duplicates }) => {
+      const duplicateText = duplicates
+        ? `; ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped`
+        : '';
+      redditMuteTransferStatus.textContent = `Imported ${added} new user${added === 1 ? '' : 's'}${duplicateText}.`;
+      showCopyToast(`Imported ${added} Reddit muted user${added === 1 ? '' : 's'}`);
+    };
+    redditMutePasteImportButton.addEventListener('click', () => {
+      if (!redditMuteImportInput.value.trim()) {
+        redditMuteTransferStatus.textContent = 'Paste at least one username.';
+        redditMuteImportInput.focus();
+        return;
+      }
+      showRedditMuteImportResult(importRedditMutedUsersText(redditMuteImportInput.value));
+      redditMuteImportInput.value = '';
+    });
+    redditMuteFileImportButton.addEventListener('click', () => redditMuteFileInput.click());
+    redditMuteFileInput.addEventListener('change', async () => {
+      const file = redditMuteFileInput.files?.[0];
+      if (!file) return;
+      try {
+        showRedditMuteImportResult(importRedditMutedUsersText(await file.text()));
+      } catch (err) {
+        console.warn('[userscript-utils] Failed to import muted Reddit users:', err);
+        redditMuteTransferStatus.textContent = 'Could not read that TXT file.';
+      } finally {
+        redditMuteFileInput.value = '';
+      }
+    });
+    redditMuteExportButton.addEventListener('click', () => {
+      const count = downloadRedditMutedUsersText();
+      redditMuteTransferStatus.textContent = `Exported ${count} muted user${count === 1 ? '' : 's'}.`;
+      showCopyToast(`Exported ${count} Reddit muted user${count === 1 ? '' : 's'}`);
+    });
+    redditMuteTransferControls.append(
+      redditMutePasteImportButton,
+      redditMuteFileImportButton,
+      redditMuteExportButton,
+      redditMuteFileInput
+    );
     redditMuteListEl = document.createElement('div');
     redditMuteListEl.className = 'utils-list';
     redditMuteControls.append(redditMuteToggleButton);
@@ -2729,6 +2849,9 @@ iframe {
       redditMuteControls,
       redditMuteInputRow,
       redditMuteDesc,
+      redditMuteImportInput,
+      redditMuteTransferControls,
+      redditMuteTransferStatus,
       redditMuteListEl
     );
     updateRedditMuteUI();

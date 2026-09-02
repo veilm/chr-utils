@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.4.2
+// @version      0.5.0
 // @description  Global utilities launcher (Alt+Shift+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -1242,8 +1242,8 @@ iframe {
 
   const normalizeNoteQuickBinding = (value) => {
     if (!value || typeof value !== 'object') return null;
-    const key = typeof value.key === 'string' ? value.key.trim().toLowerCase() : '';
-    if (!/^[a-z]$/.test(key)) return null;
+    const key = typeof value.key === 'string' ? value.key.trim() : '';
+    if (!/^[a-zA-Z]$/.test(key)) return null;
     const note = typeof value.note === 'string' ? value.note.trim() : '';
     const files = Array.isArray(value.files)
       ? [...new Set(value.files.map((path) => String(path).trim()).filter(Boolean))]
@@ -1285,7 +1285,7 @@ iframe {
     }
   };
 
-  const getNoteQuickBinding = (key) => noteQuickBindings.find((binding) => binding.key === String(key || '').toLowerCase()) || null;
+  const getNoteQuickBinding = (key) => noteQuickBindings.find((binding) => binding.key === String(key || '')) || null;
 
   const getMatchingPageNotes = (url = pageNotePageUrl) => pageNotes
     .filter((note) => note.type === 'exact' ? url === note.match : url.startsWith(note.match))
@@ -2893,19 +2893,20 @@ iframe {
     hint.appendChild(label);
 
     const commandItems = new Map([
-      ['N', 'Notepad'],
-      ['V', 'Vimium Lite'],
-      ['L', 'Copy links'],
-      ['I', 'Image right-click'],
-      ['P', 'Force paste'],
-      ['M', 'Mark page'],
+      ['n', 'Notepad'],
+      ['v', 'Vimium Lite'],
+      ['l', 'Copy links'],
+      ['i', 'Image right-click'],
+      ['p', 'Force paste'],
+      ['m', 'Mark page'],
+      ['M', 'Prefix note'],
       ['Esc', 'Cancel']
     ]);
     for (const binding of noteQuickBindings) {
       const description = binding.note
         ? `Note: ${binding.note}`
         : `Append URL to ${binding.files.length} file${binding.files.length === 1 ? '' : 's'}`;
-      commandItems.set(binding.key.toUpperCase(), description);
+      commandItems.set(binding.key, description);
     }
     for (const [key, description] of commandItems) {
       const item = document.createElement('span');
@@ -2936,43 +2937,51 @@ iframe {
 
   const handleCommandPromptKeyDown = (event) => {
     if (!commandPromptActive) return false;
+    if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) {
+      consumeUtilityKeyDown(event);
+      return true;
+    }
     commandPromptActive = false;
     dismissCommandHint();
     consumeUtilityKeyDown(event);
 
-    const lowerKey = event.key && event.key.toLowerCase ? event.key.toLowerCase() : event.key;
-    const customBinding = getNoteQuickBinding(lowerKey);
+    const commandKey = event.key || '';
+    const customBinding = getNoteQuickBinding(commandKey);
     if (customBinding) {
       executeNoteQuickBinding(customBinding);
       return true;
     }
-    if (lowerKey === 'v') {
+    if (commandKey === 'v') {
       toggleVimiumLite({ persist: false, feedback: true });
       return true;
     }
-    if (lowerKey === 'l') {
+    if (commandKey === 'l') {
       copyAllPageLinks();
       return true;
     }
-    if (lowerKey === 'i') {
+    if (commandKey === 'i') {
       setRightClickPriority(RIGHT_CLICK_PRIORITY_IMAGE);
       setRightClickMode(RIGHT_CLICK_MODE_COPY);
       showCopyToast('Right-click: copy image address');
       return true;
     }
-    if (lowerKey === 'n') {
+    if (commandKey === 'n') {
       toggleFloatingComposer();
       return true;
     }
-    if (lowerKey === 'p') {
+    if (commandKey === 'p') {
       forcePasteFromClipboard();
       return true;
     }
-    if (lowerKey === 'm') {
+    if (commandKey === 'm') {
       markOrEditCurrentPage();
       return true;
     }
-    if (lowerKey === 'escape') {
+    if (commandKey === 'M') {
+      openPrefixPageNoteEditor();
+      return true;
+    }
+    if (commandKey === 'Escape') {
       showCopyToast('Command cancelled');
       return true;
     }
@@ -3713,6 +3722,11 @@ iframe {
     openPageNoteEditor(getExactPageNote());
   };
 
+  const openPrefixPageNoteEditor = async () => {
+    pageNotePageUrl = await getTopLevelPageUrl();
+    openPageNoteEditor(null, { defaultType: 'prefix', focusMatch: true });
+  };
+
   const markOrEditCurrentPage = async () => {
     pageNotePageUrl = await getTopLevelPageUrl();
     const existing = getExactPageNote();
@@ -3730,22 +3744,22 @@ iframe {
     const noteSaved = Boolean(binding.note);
     if (noteSaved) saveExactPageNote(url, binding.note);
     if (!binding.files.length) {
-      showCopyToast(`${binding.key.toUpperCase()}: note saved.`);
+      showCopyToast(`${binding.key}: note saved.`);
       return;
     }
     try {
       await appendUrlToFiles(url, binding.files);
       const fileSummary = `URL appended to ${binding.files.length} file${binding.files.length === 1 ? '' : 's'}.`;
-      showCopyToast(noteSaved ? `${binding.key.toUpperCase()}: note saved; ${fileSummary}` : `${binding.key.toUpperCase()}: ${fileSummary}`);
+      showCopyToast(noteSaved ? `${binding.key}: note saved; ${fileSummary}` : `${binding.key}: ${fileSummary}`);
     } catch (err) {
       showCopyToast(noteSaved
-        ? `${binding.key.toUpperCase()}: note saved; file append failed.`
-        : `${binding.key.toUpperCase()}: file append failed.`);
+        ? `${binding.key}: note saved; file append failed.`
+        : `${binding.key}: file append failed.`);
       console.warn('[note-bindings] Failed to append URL:', err);
     }
   };
 
-  const openPageNoteEditor = (note = null) => {
+  const openPageNoteEditor = (note = null, { defaultType = 'exact', focusMatch = false } = {}) => {
     if (!document.body) return;
     closePageNoteEditor({ restoreAlert: false });
     removePageNoteAlertVisuals();
@@ -3757,7 +3771,7 @@ iframe {
     header.className = 'page-note-header';
     const title = document.createElement('div');
     title.className = 'page-note-title';
-    title.textContent = note ? 'Edit page note' : 'Mark this page';
+    title.textContent = note ? 'Edit page note' : defaultType === 'prefix' ? 'Add prefix page note' : 'Mark this page';
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.className = 'page-note-close';
@@ -3780,7 +3794,7 @@ iframe {
       option.textContent = label;
       typeSelect.appendChild(option);
     }
-    typeSelect.value = note ? note.type : 'exact';
+    typeSelect.value = note ? note.type : defaultType === 'prefix' ? 'prefix' : 'exact';
 
     const matchLabel = document.createElement('label');
     matchLabel.textContent = 'Match';
@@ -3789,7 +3803,7 @@ iframe {
     matchInput.value = note ? note.match : pageNotePageUrl;
     const help = document.createElement('div');
     help.className = 'page-note-help';
-    help.textContent = 'Enter saves. An empty note saves as “done”. Shift+Enter inserts a newline. Prefix matching is a literal starts-with rule.';
+    help.textContent = 'Enter saves from the note field. Ctrl+Enter saves from anywhere. An empty note saves as “done”. Shift+Enter inserts a newline. Prefix matching is a literal starts-with rule.';
 
     const actions = document.createElement('div');
     actions.className = 'page-note-actions';
@@ -3851,7 +3865,7 @@ iframe {
 
     saveButton.addEventListener('click', saveEditorNote);
     textInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !event.shiftKey) {
+      if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey) {
         event.preventDefault();
         event.stopPropagation();
         saveEditorNote();
@@ -3860,11 +3874,24 @@ iframe {
         closePageNoteEditor();
       }
     });
+    editor.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || !event.ctrlKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      saveEditorNote();
+    });
 
     editor.append(header, noteLabel, textInput, typeLabel, typeSelect, matchLabel, matchInput, help, actions);
     document.body.appendChild(editor);
     pageNoteEditorCleanup = enableDraggablePanel(editor, header);
-    window.setTimeout(() => textInput.focus(), 0);
+    window.setTimeout(() => {
+      if (focusMatch) {
+        matchInput.focus();
+        matchInput.select();
+      } else {
+        textInput.focus();
+      }
+    }, 0);
   };
 
   const downloadPageNotesJson = () => {
@@ -3887,12 +3914,12 @@ iframe {
     return pageNotes.length;
   };
 
-  const importPageNotes = (storedNotes, { overwrite = false } = {}) => {
+  const importPageNotes = (storedNotes) => {
     if (!Array.isArray(storedNotes)) throw new Error('The JSON file does not contain a notes array.');
     const nextNotes = pageNotes.map((note) => ({ ...note }));
     const ruleIndex = new Map(nextNotes.map((note, index) => [`${note.type}\u0000${note.match}`, index]));
     const usedIds = new Set(nextNotes.map((note) => note.id));
-    const result = { added: 0, overwritten: 0, skipped: 0, invalid: 0 };
+    const result = { added: 0, merged: 0, duplicates: 0, invalid: 0 };
 
     for (const rawNote of storedNotes) {
       const imported = normalizePageNote(rawNote);
@@ -3903,16 +3930,17 @@ iframe {
       const ruleKey = `${imported.type}\u0000${imported.match}`;
       const existingIndex = ruleIndex.get(ruleKey);
       if (existingIndex !== undefined) {
-        if (!overwrite) {
-          result.skipped += 1;
+        const existing = nextNotes[existingIndex];
+        if (existing.text === imported.text) {
+          result.duplicates += 1;
           continue;
         }
-        const existing = nextNotes[existingIndex];
         nextNotes[existingIndex] = {
-          ...imported,
-          id: existing.id
+          ...existing,
+          text: `Original:\n${existing.text}\n\nImported:\n${imported.text}`,
+          updatedAt: Math.floor(Date.now() / 1000)
         };
-        result.overwritten += 1;
+        result.merged += 1;
         continue;
       }
       if (usedIds.has(imported.id)) {
@@ -3926,7 +3954,7 @@ iframe {
       result.added += 1;
     }
 
-    if (result.added || result.overwritten) {
+    if (result.added || result.merged) {
       pageNotes = nextNotes;
       savePageNotes();
       pageNoteDismissedUrl = null;
@@ -4039,7 +4067,6 @@ iframe {
       #${OVERLAY_ID} .note-backup-title { margin: 0 0 4px; font-size: 14px; }
       #${OVERLAY_ID} .note-backup-help { margin: 0 0 9px; color: #b8b8b8; }
       #${OVERLAY_ID} .note-backup-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 7px; }
-      #${OVERLAY_ID} .note-backup-conflict { min-width: 210px; }
       #${OVERLAY_ID} .note-backup-file { display: none; }
       @media (max-width: 680px) {
         #${OVERLAY_ID} .note-binding-row { grid-template-columns: 64px 1fr auto; }
@@ -4064,7 +4091,7 @@ iframe {
 
     const help = document.createElement('p');
     help.className = 'note-bindings-help';
-    help.textContent = 'Choose one letter. Alt+Q then that letter can save an exact page note, append the page URL to one or more files, or do both. Custom letters override built-in quick actions.';
+    help.textContent = 'Choose one case-sensitive letter. Alt+Q then that exact letter can save an exact page note, append the page URL to one or more files, or do both. Custom letters override the built-in action with the same case.';
     const rows = document.createElement('div');
     const status = document.createElement('div');
     status.className = 'note-bindings-status';
@@ -4080,10 +4107,10 @@ iframe {
       keyInput.className = 'note-binding-key';
       keyInput.type = 'text';
       keyInput.maxLength = 1;
-      keyInput.placeholder = 'R';
-      keyInput.value = binding?.key?.toUpperCase() || '';
+      keyInput.placeholder = 'r';
+      keyInput.value = binding?.key || '';
       keyInput.addEventListener('input', () => {
-        keyInput.value = keyInput.value.replace(/[^a-z]/gi, '').slice(0, 1).toUpperCase();
+        keyInput.value = keyInput.value.replace(/[^a-z]/gi, '').slice(0, 1);
       });
       keyLabel.appendChild(keyInput);
 
@@ -4130,23 +4157,23 @@ iframe {
       const nextBindings = [];
       const seenKeys = new Set();
       for (const row of rows.querySelectorAll('.note-binding-row')) {
-        const key = row.querySelector('.note-binding-key').value.trim().toLowerCase();
+        const key = row.querySelector('.note-binding-key').value.trim();
         const note = row.querySelector('.note-binding-note').value.trim();
         const files = [...new Set(row.querySelector('.note-binding-file-list').value
           .split(/\r?\n/)
           .map((path) => path.trim())
           .filter(Boolean))];
         if (!key && !note && !files.length) continue;
-        if (!/^[a-z]$/.test(key)) {
+        if (!/^[a-zA-Z]$/.test(key)) {
           status.textContent = 'Every binding needs one letter from A to Z.';
           return;
         }
         if (seenKeys.has(key)) {
-          status.textContent = `The letter ${key.toUpperCase()} is assigned more than once.`;
+          status.textContent = `The letter ${key} is assigned more than once.`;
           return;
         }
         if (!note && !files.length) {
-          status.textContent = `${key.toUpperCase()} needs a note, at least one file, or both.`;
+          status.textContent = `${key} needs a note, at least one file, or both.`;
           return;
         }
         const invalidPath = files.find((path) => !path.startsWith('/') && !path.startsWith('~/'));
@@ -4182,7 +4209,7 @@ iframe {
     backupTitle.textContent = 'Page Note Import / Export';
     const backupHelp = document.createElement('p');
     backupHelp.className = 'note-backup-help';
-    backupHelp.textContent = 'Export every exact and prefix page note, or import a chr-utils JSON backup.';
+    backupHelp.textContent = 'Export every exact and prefix page note, or import a chr-utils JSON backup. Conflicting rules merge both note texts.';
     const backupControls = document.createElement('div');
     backupControls.className = 'note-backup-controls';
     const exportButton = document.createElement('button');
@@ -4193,20 +4220,6 @@ iframe {
       const count = downloadPageNotesJson();
       showCopyToast(`Exported ${count} page note${count === 1 ? '' : 's'}.`);
     });
-
-    const conflictLabel = document.createElement('label');
-    conflictLabel.className = 'note-backup-conflict';
-    conflictLabel.textContent = 'Import conflicts';
-    const conflictSelect = document.createElement('select');
-    const keepOption = document.createElement('option');
-    keepOption.value = 'keep';
-    keepOption.textContent = 'Keep current notes (default)';
-    const overwriteOption = document.createElement('option');
-    overwriteOption.value = 'overwrite';
-    overwriteOption.textContent = 'Overwrite current notes';
-    conflictSelect.append(keepOption, overwriteOption);
-    conflictSelect.value = 'keep';
-    conflictLabel.appendChild(conflictSelect);
 
     const importButton = document.createElement('button');
     importButton.type = 'button';
@@ -4227,11 +4240,11 @@ iframe {
         if (file.size > 10 * 1024 * 1024) throw new Error('The import file is larger than 10 MB.');
         const parsed = JSON.parse(await file.text());
         const storedNotes = Array.isArray(parsed) ? parsed : parsed?.notes;
-        const result = importPageNotes(storedNotes, { overwrite: conflictSelect.value === 'overwrite' });
+        const result = importPageNotes(storedNotes);
         const parts = [
           `${result.added} added`,
-          `${result.overwritten} overwritten`,
-          `${result.skipped} kept current`
+          `${result.merged} merged`,
+          `${result.duplicates} duplicates skipped`
         ];
         if (result.invalid) parts.push(`${result.invalid} invalid skipped`);
         importStatus.style.color = '#86efac';
@@ -4243,7 +4256,7 @@ iframe {
         fileInput.value = '';
       }
     });
-    backupControls.append(exportButton, conflictLabel, importButton, fileInput);
+    backupControls.append(exportButton, importButton, fileInput);
     backupSection.append(backupTitle, backupHelp, backupControls, importStatus);
 
     overlay.append(header, help, rows, actions, status, backupSection);

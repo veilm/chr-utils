@@ -2,7 +2,7 @@
 // @name         Chromium Utils
 // @author       https://x.com/mislocating | codex | claude
 // @namespace    https://github.com/veilm/chr-utils
-// @version      0.5.2
+// @version      0.6.0
 // @description  Global utilities launcher (Alt+Shift+Q)
 // @match        *://*/*
 // @match        file:///*
@@ -141,6 +141,7 @@ video::-webkit-media-controls-overlay-enclosure {
   const TOP_COMMAND_PROMPT_REQUEST = 'userscript-utils:top-command-prompt-request:v1';
   const TOP_COMMAND_KEY_REQUEST = 'userscript-utils:top-command-key-request:v1';
   const TOP_MENU_TOGGLE_REQUEST = 'userscript-utils:top-menu-toggle-request:v1';
+  const TOP_SHORTCUT_REQUEST = 'userscript-utils:top-shortcut-request:v1';
   const COMMAND_HINT_TIMEOUT_MS = 5000;
   const COMMAND_SERVER_URL = 'http://127.0.0.1:61483/run';
   const APPEND_LINES_SERVER_URL = 'http://127.0.0.1:61483/append-lines';
@@ -3334,6 +3335,10 @@ iframe {
       }
       if (event.source !== window && event.data?.type === TOP_MENU_TOGGLE_REQUEST) {
         setMenuOpen(!menuEl || !menuEl.isConnected);
+        return;
+      }
+      if (event.source !== window && event.data?.type === TOP_SHORTCUT_REQUEST) {
+        runTopShortcut(event.data.action, event.data.detail);
       }
     });
   }
@@ -4019,6 +4024,79 @@ iframe {
     return result;
   };
 
+  const importPlainTextPageNotes = async (rawUrls, noteText, onProgress = null) => {
+    const lines = String(rawUrls || '').split(/\r?\n/);
+    const text = String(noteText || '').trim() || 'done';
+    const nextNotes = pageNotes.map((note) => ({ ...note }));
+    const ruleIndex = new Map(nextNotes.map((note, index) => [getPageNoteRuleKey(note.type, note.match), index]));
+    const usedIds = new Set(nextNotes.map((note) => note.id));
+    const result = { added: 0, merged: 0, duplicates: 0, invalid: 0, blank: 0 };
+    const importedSection = `Manual plain text note:\n${text}`;
+    const now = Math.floor(Date.now() / 1000);
+    const yieldProgress = async (processed) => {
+      if (typeof onProgress === 'function') onProgress(processed, lines.length);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    };
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const rawUrl = lines[index].trim();
+      if (!rawUrl) {
+        result.blank += 1;
+        if ((index + 1) % 1000 === 0) await yieldProgress(index + 1);
+        continue;
+      }
+      let match;
+      try {
+        const parsed = new URL(rawUrl);
+        if (!['http:', 'https:', 'file:'].includes(parsed.protocol)) throw new Error('Unsupported URL protocol');
+        match = parsed.href;
+      } catch (err) {
+        result.invalid += 1;
+        if ((index + 1) % 1000 === 0) await yieldProgress(index + 1);
+        continue;
+      }
+
+      const ruleKey = getPageNoteRuleKey('exact', match);
+      const existingIndex = ruleIndex.get(ruleKey);
+      if (existingIndex !== undefined) {
+        const existing = nextNotes[existingIndex];
+        if (existing.text === text
+          || existing.text === importedSection
+          || existing.text.includes(`\n\n${importedSection}`)) {
+          result.duplicates += 1;
+        } else {
+          nextNotes[existingIndex] = {
+            ...existing,
+            text: `Original:\n${existing.text}\n\n${importedSection}`,
+            updatedAt: now
+          };
+          result.merged += 1;
+        }
+      } else {
+        let id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        while (usedIds.has(id)) id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        usedIds.add(id);
+        ruleIndex.set(ruleKey, nextNotes.length);
+        nextNotes.push({ id, type: 'exact', match, text, createdAt: now, updatedAt: now });
+        result.added += 1;
+      }
+
+      if ((index + 1) % 1000 === 0) await yieldProgress(index + 1);
+    }
+
+    if (result.added || result.merged) {
+      pageNotes = nextNotes;
+      savePageNotes();
+      pageNoteDismissedUrl = null;
+      updatePageNotesMenuStatus();
+      renderPageNoteAlert({ force: true });
+    }
+    if (typeof onProgress === 'function') onProgress(lines.length, lines.length);
+    return result;
+  };
+
   const closeNoteBindingSettingsPanel = ({ remember = true } = {}) => {
     if (!noteBindingsPanelState) {
       if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.noteBindings, false);
@@ -4123,6 +4201,12 @@ iframe {
       #${OVERLAY_ID} .note-backup-help { margin: 0 0 9px; color: #b8b8b8; }
       #${OVERLAY_ID} .note-backup-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 7px; }
       #${OVERLAY_ID} .note-backup-file { display: none; }
+      #${OVERLAY_ID} .note-plain-import {
+        margin-top: 13px;
+        padding-top: 11px;
+        border-top: 1px solid rgba(255, 255, 255, 0.09);
+      }
+      #${OVERLAY_ID} .note-plain-import textarea { min-height: 150px; }
       @media (max-width: 680px) {
         #${OVERLAY_ID} .note-binding-row { grid-template-columns: 64px 1fr auto; }
         #${OVERLAY_ID} .note-binding-files { grid-column: 1 / -1; }
@@ -4312,7 +4396,70 @@ iframe {
       }
     });
     backupControls.append(exportButton, importButton, fileInput);
-    backupSection.append(backupTitle, backupHelp, backupControls, importStatus);
+
+    const plainImport = document.createElement('section');
+    plainImport.className = 'note-plain-import';
+    const plainImportTitle = document.createElement('h3');
+    plainImportTitle.className = 'note-backup-title';
+    plainImportTitle.textContent = 'Import Plain Text URLs';
+    const plainImportHelp = document.createElement('p');
+    plainImportHelp.className = 'note-backup-help';
+    plainImportHelp.textContent = 'Paste one URL per line. Each valid URL receives the same exact-URL note. Existing notes are retained and merged under “Manual plain text note”. Large lists are processed in responsive batches.';
+    const plainNoteLabel = document.createElement('label');
+    plainNoteLabel.textContent = 'Note for every URL';
+    const plainNoteInput = document.createElement('input');
+    plainNoteInput.type = 'text';
+    plainNoteInput.placeholder = 'done';
+    plainNoteLabel.appendChild(plainNoteInput);
+    const plainUrlsLabel = document.createElement('label');
+    plainUrlsLabel.textContent = 'URLs (one per line)';
+    const plainUrlsInput = document.createElement('textarea');
+    plainUrlsInput.placeholder = 'https://example.com/page-one\nhttps://example.com/page-two';
+    plainUrlsLabel.appendChild(plainUrlsInput);
+    const plainImportButton = document.createElement('button');
+    plainImportButton.type = 'button';
+    plainImportButton.className = 'note-bindings-button';
+    plainImportButton.textContent = 'Import plain text';
+    const plainImportStatus = document.createElement('div');
+    plainImportStatus.className = 'note-bindings-status';
+    plainImportButton.addEventListener('click', async () => {
+      if (!plainUrlsInput.value.trim()) {
+        plainImportStatus.style.color = '#fca5a5';
+        plainImportStatus.textContent = 'Paste at least one URL.';
+        plainUrlsInput.focus();
+        return;
+      }
+      plainImportButton.disabled = true;
+      plainImportStatus.style.color = '#facc15';
+      plainImportStatus.textContent = 'Preparing import…';
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      try {
+        const result = await importPlainTextPageNotes(
+          plainUrlsInput.value,
+          plainNoteInput.value || plainNoteInput.placeholder,
+          (processed, total) => {
+            plainImportStatus.textContent = `Processing ${processed.toLocaleString()} / ${total.toLocaleString()} lines…`;
+          }
+        );
+        const parts = [
+          `${result.added.toLocaleString()} added`,
+          `${result.merged.toLocaleString()} merged`,
+          `${result.duplicates.toLocaleString()} duplicates skipped`
+        ];
+        if (result.invalid) parts.push(`${result.invalid.toLocaleString()} invalid skipped`);
+        plainImportStatus.style.color = '#86efac';
+        plainImportStatus.textContent = `Import complete: ${parts.join(', ')}.`;
+        showCopyToast('Plain text page-note import complete.');
+      } catch (err) {
+        plainImportStatus.style.color = '#fca5a5';
+        plainImportStatus.textContent = err instanceof Error ? err.message : 'Could not import those URLs.';
+      } finally {
+        plainImportButton.disabled = false;
+      }
+    });
+    plainImport.append(plainImportTitle, plainImportHelp, plainNoteLabel, plainUrlsLabel, plainImportButton, plainImportStatus);
+
+    backupSection.append(backupTitle, backupHelp, backupControls, importStatus, plainImport);
 
     overlay.append(header, help, rows, actions, status, backupSection);
     document.body.appendChild(overlay);
@@ -5938,6 +6085,33 @@ iframe {
     scrollTargetEl.scrollTop = Math.max(0, Math.min(maxY, jumpTarget + offset));
   };
 
+  const runTopShortcut = (action, detail = null) => {
+    if (action === 'dark-mode') {
+      toggleDarkModeForSite();
+      return;
+    }
+    if (action === 'vimium-toggle') {
+      toggleVimiumLite({ persist: false, feedback: true });
+      return;
+    }
+    if (action === 'clipboard-url') {
+      openClipboardUrl(Boolean(detail?.openInNewTab));
+      return;
+    }
+    if (action === 'copy-url') {
+      copyTextToClipboard(window.location.href);
+      showCopyToast('Copied URL!');
+    }
+  };
+
+  const runOrForwardTopShortcut = (action, detail = null) => {
+    if (isTopLevelPage()) {
+      runTopShortcut(action, detail);
+    } else {
+      window.top.postMessage({ type: TOP_SHORTCUT_REQUEST, action, detail }, '*');
+    }
+  };
+
   const onKeyDown = (event) => {
     if (event.repeat) return;
     if (handleCommandPromptKeyDown(event)) return;
@@ -5967,26 +6141,23 @@ iframe {
     if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'a') {
       if (shouldIgnoreKeyEvent(event)) return;
       consumeUtilityKeyDown(event);
-      toggleDarkModeForSite();
+      runOrForwardTopShortcut('dark-mode');
       return;
     }
     if (event.ctrlKey && event.altKey && !event.metaKey && lowerKey === 'i') {
       if (shouldIgnoreKeyEvent(event)) return;
       consumeUtilityKeyDown(event);
-      toggleVimiumLite({ persist: false, feedback: true });
+      runOrForwardTopShortcut('vimium-toggle');
       return;
     }
     if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'p') {
       consumeUtilityKeyDown(event);
-      openClipboardUrl(Boolean(event.shiftKey));
+      runOrForwardTopShortcut('clipboard-url', { openInNewTab: Boolean(event.shiftKey) });
       return;
     }
     if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'y') {
       consumeUtilityKeyDown(event);
-      getTopLevelPageUrl().then((url) => {
-        copyTextToClipboard(url);
-        showCopyToast('Copied URL!');
-      });
+      runOrForwardTopShortcut('copy-url');
       return;
     }
     if (menuEl && menuEl.isConnected) {

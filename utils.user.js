@@ -156,6 +156,7 @@ video::-webkit-media-controls-overlay-enclosure {
   const WORKSPACE_STATE_KEY = 'userscript-utils:workspace-state:v1';
   const PAGE_NOTES_KEY = 'userscript-utils:page-notes:v1';
   const PAGE_NOTES_CHANNEL_NAME = 'userscript-utils:page-notes-sync:v1';
+  const REDDIT_MUTE_SETTINGS_CHANNEL_NAME = 'userscript-utils:reddit-mute-settings-sync:v1';
   const NOTE_QUICK_BINDINGS_KEY = 'userscript-utils:note-quick-bindings:v1';
   const NOTE_QUICK_BINDINGS_CHANNEL_NAME = 'userscript-utils:note-quick-bindings-sync:v1';
   const PAGE_NOTE_STYLE_ID = 'userscript-utils-page-note-style';
@@ -363,6 +364,7 @@ iframe {
   let noteQuickBindings = [];
   let noteQuickBindingsChannel = null;
   let pageNotesChannel = null;
+  let redditMuteSettingsChannel = null;
   let pageNotesMenuStatusEl = null;
   let pageNoteDismissedUrl = null;
   let pageNoteAlertCleanup = null;
@@ -1391,6 +1393,12 @@ iframe {
       } else {
         window.localStorage.setItem(REDDIT_MUTED_USERS_KEY, JSON.stringify(redditMutedUsers));
         window.localStorage.setItem(REDDIT_MUTING_ENABLED_KEY, String(redditMutingEnabled));
+      }
+      if (redditMuteSettingsChannel) {
+        redditMuteSettingsChannel.postMessage({
+          users: redditMutedUsers,
+          enabled: redditMutingEnabled
+        });
       }
     } catch (err) {
       console.warn('[userscript-utils] Failed to save Reddit mute settings:', err);
@@ -7439,7 +7447,39 @@ iframe {
     });
   };
 
-  const installPageNotesSync = () => {
+  const applySyncedRedditMutedUsers = (stored) => {
+    if (!Array.isArray(stored)) return;
+    const seen = new Set();
+    const nextUsers = stored.reduce((users, value) => {
+      const username = normalizeRedditUsername(value);
+      const key = username.toLowerCase();
+      if (username && !seen.has(key)) {
+        seen.add(key);
+        users.push(username);
+      }
+      return users;
+    }, []);
+    if (JSON.stringify(nextUsers) === JSON.stringify(redditMutedUsers)) return;
+    redditMutedUsers = nextUsers;
+    updateRedditMuteUI();
+    refreshRedditMutedPosts();
+  };
+
+  const applySyncedRedditMutingEnabled = (stored) => {
+    const nextEnabled = stored !== false && stored !== 'false';
+    if (nextEnabled === redditMutingEnabled) return;
+    redditMutingEnabled = nextEnabled;
+    updateRedditMuteUI();
+    refreshRedditMutedPosts();
+  };
+
+  const applySyncedRedditMuteSettings = (stored) => {
+    if (!stored || typeof stored !== 'object') return;
+    applySyncedRedditMutedUsers(stored.users);
+    applySyncedRedditMutingEnabled(stored.enabled);
+  };
+
+  const installCrossTabSync = () => {
     if (typeof GM_addValueChangeListener === 'function') {
       try {
         GM_addValueChangeListener(PAGE_NOTES_KEY, (_key, _oldValue, newValue, remote) => {
@@ -7448,8 +7488,14 @@ iframe {
         GM_addValueChangeListener(NOTE_QUICK_BINDINGS_KEY, (_key, _oldValue, newValue, remote) => {
           if (remote) applySyncedNoteQuickBindings(newValue);
         });
+        GM_addValueChangeListener(REDDIT_MUTED_USERS_KEY, (_key, _oldValue, newValue, remote) => {
+          if (remote) applySyncedRedditMutedUsers(newValue);
+        });
+        GM_addValueChangeListener(REDDIT_MUTING_ENABLED_KEY, (_key, _oldValue, newValue, remote) => {
+          if (remote) applySyncedRedditMutingEnabled(newValue);
+        });
       } catch (err) {
-        console.warn('[page-notes] Failed to watch userscript storage:', err);
+        console.warn('[userscript-utils] Failed to watch userscript storage:', err);
       }
     }
     if (typeof BroadcastChannel === 'function') {
@@ -7458,8 +7504,10 @@ iframe {
         pageNotesChannel.addEventListener('message', (event) => applySyncedPageNotes(event.data));
         noteQuickBindingsChannel = new BroadcastChannel(NOTE_QUICK_BINDINGS_CHANNEL_NAME);
         noteQuickBindingsChannel.addEventListener('message', (event) => applySyncedNoteQuickBindings(event.data));
+        redditMuteSettingsChannel = new BroadcastChannel(REDDIT_MUTE_SETTINGS_CHANNEL_NAME);
+        redditMuteSettingsChannel.addEventListener('message', (event) => applySyncedRedditMuteSettings(event.data));
       } catch (err) {
-        console.warn('[page-notes] Failed to open the cross-tab channel:', err);
+        console.warn('[userscript-utils] Failed to open a cross-tab channel:', err);
       }
     }
     window.addEventListener('storage', (event) => {
@@ -7467,6 +7515,8 @@ iframe {
       try {
         if (event.key === PAGE_NOTES_KEY) applySyncedPageNotes(JSON.parse(event.newValue));
         if (event.key === NOTE_QUICK_BINDINGS_KEY) applySyncedNoteQuickBindings(JSON.parse(event.newValue));
+        if (event.key === REDDIT_MUTED_USERS_KEY) applySyncedRedditMutedUsers(JSON.parse(event.newValue));
+        if (event.key === REDDIT_MUTING_ENABLED_KEY) applySyncedRedditMutingEnabled(event.newValue);
       } catch (err) {
         console.warn('[userscript-utils] Failed to read a cross-tab storage update:', err);
       }
@@ -7517,7 +7567,7 @@ iframe {
     schedulePageNoteAlert(500);
   };
 
-  installPageNotesSync();
+  installCrossTabSync();
   window.setInterval(handleWorkspaceRouteChange, 300);
   window.addEventListener('pageshow', () => {
     scheduleWorkspaceRestore(350);

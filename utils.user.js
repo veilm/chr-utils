@@ -173,6 +173,7 @@ video::-webkit-media-controls-overlay-enclosure {
     youtubeVideos: 'youtube-videos'
   });
   const LINK_MONITOR_REGEX_KEY = 'userscript-utils:link-monitor-regex-rows';
+  const LINK_MONITOR_STATE_KEY = 'userscript-utils:link-monitor-state:v1';
   const REQUEST_MONITOR_REGEX_KEY = 'userscript-utils:request-monitor-regex-rows';
   const REQUEST_MONITOR_EVENT = 'userscript-utils:request';
   const REQUEST_MONITOR_READY_EVENT = 'userscript-utils:request-hook-ready';
@@ -1405,32 +1406,59 @@ iframe {
     }
   };
 
-  const loadLinkMonitorRegexRows = () => {
+  const normalizeLinkMonitorRegexRows = (items) => {
+    if (!Array.isArray(items)) return [];
+    const rows = [];
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      const pattern = typeof item.pattern === 'string' ? item.pattern.trim() : '';
+      const flags = typeof item.flags === 'string' ? item.flags.trim() : '';
+      if (!pattern) continue;
+      rows.push({ pattern, flags });
+    }
+    return rows;
+  };
+
+  const loadLinkMonitorState = () => {
     try {
-      const raw = window.localStorage.getItem(LINK_MONITOR_REGEX_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      const rows = [];
-      for (const item of parsed) {
-        if (!item || typeof item !== 'object') continue;
-        const pattern = typeof item.pattern === 'string' ? item.pattern.trim() : '';
-        const flags = typeof item.flags === 'string' ? item.flags.trim() : '';
-        if (!pattern) continue;
-        rows.push({ pattern, flags });
+      const rawState = window.localStorage.getItem(LINK_MONITOR_STATE_KEY);
+      if (rawState) {
+        const parsed = JSON.parse(rawState);
+        const matches = [];
+        const seenMatches = new Set();
+        if (parsed && Array.isArray(parsed.matches)) {
+          for (const value of parsed.matches) {
+            if (typeof value !== 'string' || !value || seenMatches.has(value)) continue;
+            seenMatches.add(value);
+            matches.push(value);
+          }
+        }
+        return {
+          initialized: true,
+          regexRows: normalizeLinkMonitorRegexRows(parsed && parsed.regexRows),
+          matches
+        };
       }
-      return rows;
+
+      // Migrate regexes saved by versions that did not retain matched links.
+      const rawLegacyRows = window.localStorage.getItem(LINK_MONITOR_REGEX_KEY);
+      const legacyRows = JSON.parse(rawLegacyRows || '[]');
+      return {
+        initialized: rawLegacyRows !== null,
+        regexRows: normalizeLinkMonitorRegexRows(legacyRows),
+        matches: []
+      };
     } catch (err) {
-      console.warn('[userscript-utils] Failed to load link monitor regex rows:', err);
-      return [];
+      console.warn('[userscript-utils] Failed to load link monitor state:', err);
+      return { initialized: false, regexRows: [], matches: [] };
     }
   };
 
-  const saveLinkMonitorRegexRows = (rows) => {
+  const saveLinkMonitorState = (regexRows, matches) => {
     try {
-      window.localStorage.setItem(LINK_MONITOR_REGEX_KEY, JSON.stringify(rows));
+      window.localStorage.setItem(LINK_MONITOR_STATE_KEY, JSON.stringify({ regexRows, matches }));
     } catch (err) {
-      console.warn('[userscript-utils] Failed to save link monitor regex rows:', err);
+      console.warn('[userscript-utils] Failed to save link monitor state:', err);
     }
   };
 
@@ -5044,7 +5072,10 @@ iframe {
       if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.linkMonitor, false);
       return;
     }
-    const { intervalId, overlay, style, mutationObserver, detachDrag } = linkMonitorOverlayState;
+    const { intervalId, overlay, style, mutationObserver, detachDrag, persistState } = linkMonitorOverlayState;
+    if (typeof persistState === 'function') {
+      persistState();
+    }
     if (typeof detachDrag === 'function') {
       detachDrag();
     }
@@ -5189,8 +5220,11 @@ iframe {
     regexRowsWrap.style.alignItems = 'stretch';
     regexRowsWrap.style.gap = '6px';
 
+    const storedState = loadLinkMonitorState();
+    const matches = [...storedState.matches];
+    const matchSet = new Set(matches);
     const regexRows = [];
-    const persistRegexRows = () => {
+    const persistState = () => {
       const rowsToSave = [];
       for (const row of regexRows) {
         if (!row.patternInput.isConnected) continue;
@@ -5199,7 +5233,7 @@ iframe {
         if (!pattern) continue;
         rowsToSave.push({ pattern, flags });
       }
-      saveLinkMonitorRegexRows(rowsToSave);
+      saveLinkMonitorState(rowsToSave, matches);
     };
     const getCompiledRegexes = () => {
       const compiled = [];
@@ -5243,27 +5277,26 @@ iframe {
       removeBtn.textContent = 'Remove';
       removeBtn.addEventListener('click', () => {
         row.remove();
-        persistRegexRows();
+        persistState();
       });
-      patternInput.addEventListener('input', persistRegexRows);
-      flagsInput.addEventListener('input', persistRegexRows);
+      patternInput.addEventListener('input', persistState);
+      flagsInput.addEventListener('input', persistState);
       row.append(patternInput, flagsInput, removeBtn);
       regexRowsWrap.appendChild(row);
       regexRows.push({ row, patternInput, flagsInput });
       if (shouldPersist) {
-        persistRegexRows();
+        persistState();
       }
     };
 
-    const storedRegexRows = loadLinkMonitorRegexRows();
-    if (storedRegexRows.length) {
+    const storedRegexRows = storedState.regexRows;
+    if (storedState.initialized) {
       for (const { pattern, flags } of storedRegexRows) {
         addRegexRow(pattern, flags, false);
       }
     } else {
       addRegexRow('example\\.com', 'i', false);
     }
-    persistRegexRows();
 
     const controlsRow = document.createElement('div');
     controlsRow.className = 'link-panel-row';
@@ -5306,8 +5339,6 @@ iframe {
     document.body.appendChild(overlay);
     const detachDrag = enableDraggablePanel(overlay, header, { workspaceId: WORKSPACE_PANEL_IDS.linkMonitor });
 
-    const matches = [];
-    const matchSet = new Set();
     const renderMatches = () => {
       countEl.textContent = `${matches.length} matched link${matches.length === 1 ? '' : 's'}`;
       listEl.textContent = matches.length ? matches.join('\n') : 'No matched links yet.';
@@ -5324,6 +5355,7 @@ iframe {
       matches.length = 0;
       matchSet.clear();
       renderMatches();
+      persistState();
     });
 
     const runScan = () => {
@@ -5336,6 +5368,7 @@ iframe {
         ? `Scanning (${compiled.length} active, ${invalidCount} invalid)`
         : `Scanning (${compiled.length} active)`;
       const anchors = document.querySelectorAll('a[href]');
+      let changed = false;
       for (const anchor of anchors) {
         const href = anchor.href || anchor.getAttribute('href') || '';
         if (!href || matchSet.has(href)) continue;
@@ -5345,9 +5378,11 @@ iframe {
         })) {
           matchSet.add(href);
           matches.push(href);
+          changed = true;
         }
       }
       renderMatches();
+      if (changed) persistState();
     };
 
     const intervalId = window.setInterval(runScan, 50);
@@ -5368,8 +5403,10 @@ iframe {
       style,
       intervalId,
       mutationObserver,
-      detachDrag
+      detachDrag,
+      persistState
     };
+    persistState();
     setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.linkMonitor, true);
   };
 

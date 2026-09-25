@@ -2097,6 +2097,135 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     return messages.size;
   };
 
+  const isChatGPTHost = () => window.location.hostname === 'chatgpt.com';
+
+  const chatGPTMarkdownFromDOM = (root) => {
+    const inline = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      const tag = node.tagName.toLowerCase();
+      if (['button', 'svg', 'script', 'style'].includes(tag) || node.getAttribute('aria-hidden') === 'true') return '';
+      const content = () => [...node.childNodes].map(inline).join('');
+      if (tag === 'br') return '\n';
+      if (tag === 'strong' || tag === 'b') return `**${content()}**`;
+      if (tag === 'em' || tag === 'i') return `*${content()}*`;
+      if (tag === 'code') {
+        const value = node.textContent;
+        const fence = '`'.repeat(Math.max(1, ...[...value.matchAll(/`+/g)].map((match) => match[0].length + 1)));
+        return `${fence}${value}${fence}`;
+      }
+      if (tag === 'a') {
+        const label = content().trim() || node.href;
+        return node.href ? `[${label}](${node.href})` : label;
+      }
+      if (tag === 'img') return node.getAttribute('alt') || '';
+      return content();
+    };
+    const block = (node) => {
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      const tag = node.tagName.toLowerCase();
+      if (['button', 'svg', 'script', 'style'].includes(tag) || node.getAttribute('aria-hidden') === 'true') return '';
+      if (/^h[1-6]$/.test(tag)) return `${'#'.repeat(Number(tag[1]))} ${inline(node).trim()}`;
+      if (tag === 'p') return inline(node).trim();
+      if (tag === 'hr') return '---';
+      if (tag === 'pre') {
+        const code = node.querySelector('code');
+        const value = (code || node).textContent.replace(/\n$/, '');
+        const fence = '`'.repeat(Math.max(3, ...[...value.matchAll(/`+/g)].map((match) => match[0].length + 1)));
+        const language = code?.className.match(/language-([\w+-]+)/)?.[1] || '';
+        return `${fence}${language}\n${value}\n${fence}`;
+      }
+      if (tag === 'table') {
+        const rows = [...node.rows].map((row) => [...row.cells].map((cell) => inline(cell).trim().replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ')));
+        if (!rows.length) return '';
+        const width = Math.max(...rows.map((row) => row.length));
+        const line = (row) => `| ${Array.from({ length: width }, (_, index) => row[index] || '').join(' | ')} |`;
+        return [line(rows[0]), line(Array(width).fill('---')), ...rows.slice(1).map(line)].join('\n');
+      }
+      if (tag === 'ul' || tag === 'ol') {
+        const start = Number(node.getAttribute('start')) || 1;
+        return [...node.children].filter((child) => child.tagName === 'LI').map((item, index) => {
+          const nested = [...item.children].filter((child) => ['UL', 'OL'].includes(child.tagName));
+          const text = [...item.childNodes].filter((child) => !nested.includes(child)).map(inline).join('').trim();
+          const marker = tag === 'ol' ? `${start + index}.` : '-';
+          const continuation = nested.map((child) => block(child).split('\n').map((line) => `  ${line}`).join('\n')).join('\n');
+          return `${marker} ${text}${continuation ? `\n${continuation}` : ''}`;
+        }).join('\n');
+      }
+      if (tag === 'blockquote') return [...node.children].map(block).filter(Boolean).join('\n\n').split('\n').map((line) => `> ${line}`).join('\n');
+      return [...node.children].map(block).filter(Boolean).join('\n\n') || inline(node).trim();
+    };
+    return [...root.children].map(block).filter(Boolean).join('\n\n').trim();
+  };
+
+  const exportChatGPTConversation = async () => {
+    const turnSelector = 'section[data-testid^="conversation-turn-"][data-turn]';
+    const firstTurn = document.querySelector(turnSelector);
+    if (!firstTurn) throw new Error('ChatGPT conversation not found.');
+    let scroller = firstTurn.parentElement;
+    while (scroller && !['auto', 'scroll'].includes(window.getComputedStyle(scroller).overflowY)) {
+      scroller = scroller.parentElement;
+    }
+    if (!scroller) throw new Error('ChatGPT conversation scroller not found.');
+
+    const originalScrollTop = scroller.scrollTop;
+    const messages = new Map();
+    let lastTurn = 0;
+    const capture = (root = document) => {
+      const turns = root.matches?.(turnSelector) ? [root] : root.querySelectorAll(turnSelector);
+      for (const turn of turns) {
+        const number = Number(turn.dataset.testid.slice('conversation-turn-'.length));
+        if (!Number.isInteger(number) || number < 1) continue;
+        lastTurn = Math.max(lastTurn, number);
+        const role = turn.dataset.turn;
+        if (!['user', 'assistant'].includes(role)) continue;
+        const message = turn.querySelector(`[data-message-author-role="${role}"]`);
+        if (!message) continue;
+        const body = role === 'user'
+          ? message.innerText.trim()
+          : [...message.querySelectorAll('.markdown')].map(chatGPTMarkdownFromDOM).filter(Boolean).join('\n\n');
+        if (!body) continue;
+        messages.set(number, { role: role === 'user' ? 'Human' : 'ChatGPT', body });
+      }
+    };
+    const settle = () => new Promise((resolve) => window.setTimeout(resolve, 250));
+    try {
+      scroller.scrollTo({ top: 0, behavior: 'instant' });
+      for (let attempt = 0; attempt < 20; attempt++) {
+        await settle();
+        if (!document.querySelector('[data-testid="conversation-pagination-sentinel"]')) break;
+      }
+      const turnList = document.querySelector(turnSelector)?.parentElement.parentElement;
+      if (!turnList) throw new Error('ChatGPT transcript not found.');
+      const containers = [...turnList.children].filter((child) => child.hasAttribute('data-turn-id-container') && child.dataset.turnIdContainer !== 'client-created-root');
+      for (const container of containers) {
+        container.scrollIntoView({ block: 'center', behavior: 'instant' });
+        await settle();
+        capture(container);
+        if (!container.querySelector(turnSelector)) {
+          container.scrollIntoView({ block: 'start', behavior: 'instant' });
+          await settle();
+          capture(container);
+        }
+      }
+    } finally {
+      scroller.scrollTo({ top: originalScrollTop, behavior: 'instant' });
+    }
+    const missing = Array.from({ length: lastTurn }, (_, index) => index + 1).filter((number) => !messages.has(number));
+    if (missing.length) throw new Error(`ChatGPT export incomplete: ${missing.length} turn${missing.length === 1 ? '' : 's'} could not be captured.`);
+    if (!messages.size) throw new Error('No ChatGPT messages found.');
+
+    const markdown = [`# ${document.title.trim() || 'ChatGPT conversation'}`, '', `Source: ${window.location.href}`, ''];
+    for (const number of [...messages.keys()].sort((a, b) => a - b)) {
+      const message = messages.get(number);
+      markdown.push(`## ${message.role}`, '', message.body, '');
+    }
+    if (!await copyTextToClipboard(markdown.join('\n').trimEnd() + '\n')) {
+      throw new Error('Could not copy the ChatGPT conversation.');
+    }
+    return messages.size;
+  };
+
   const getClaudeComposerDraftKey = () => {
     const chatMatch = window.location.pathname.match(/^\/chat\/([^/?#]+)/);
     const pageKey = chatMatch ? `chat:${chatMatch[1]}` : `page:${window.location.pathname}`;
@@ -2955,6 +3084,29 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     });
     claudeSection.append(claudeTitle, claudeExportButton);
 
+    const chatGPTSection = document.createElement('div');
+    chatGPTSection.className = 'utils-section';
+    const chatGPTTitle = document.createElement('h3');
+    chatGPTTitle.textContent = 'ChatGPT Conversation';
+    const chatGPTExportButton = document.createElement('button');
+    chatGPTExportButton.type = 'button';
+    chatGPTExportButton.className = 'utils-btn';
+    chatGPTExportButton.textContent = 'Copy conversation as Markdown';
+    chatGPTExportButton.addEventListener('click', async () => {
+      chatGPTExportButton.disabled = true;
+      chatGPTExportButton.textContent = 'Collecting messages...';
+      try {
+        const count = await exportChatGPTConversation();
+        showCopyToast(`Copied ${count} ChatGPT message${count === 1 ? '' : 's'} as Markdown.`);
+      } catch (error) {
+        showCopyToast(error.message || 'ChatGPT export failed.');
+      } finally {
+        chatGPTExportButton.disabled = false;
+        chatGPTExportButton.textContent = 'Copy conversation as Markdown';
+      }
+    });
+    chatGPTSection.append(chatGPTTitle, chatGPTExportButton);
+
     const darkModeSection = document.createElement('div');
     darkModeSection.className = 'utils-section';
     const darkModeTitle = document.createElement('h3');
@@ -3187,6 +3339,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
 
     panel.append(header, rightClickSection, darkModeSection, auditSection, pageNotesSection);
     if (isClaudeHost()) panel.appendChild(claudeSection);
+    if (isChatGPTHost()) panel.appendChild(chatGPTSection);
     if (isXHost()) panel.appendChild(xSection);
     if (isYouTubeHost()) panel.append(ytSection, ytUiSection);
     panel.append(linkMonitorSection, requestMonitorSection);

@@ -181,6 +181,8 @@ video::-webkit-media-controls-overlay-enclosure {
   const REQUEST_MONITOR_MAX_ENTRIES = 1000;
   const X_SETTINGS_KEY = 'userscript-utils:x-settings';
   const X_STYLE_ID = 'userscript-utils-x-style';
+  const YOUTUBE_UI_SETTINGS_KEY = 'userscript-utils:youtube-ui-settings:v1';
+  const YOUTUBE_UI_STYLE_ID = 'userscript-utils-youtube-ui-style';
   const REDDIT_MUTED_USERS_KEY = 'userscript-utils:reddit-muted-users';
   const REDDIT_MUTING_ENABLED_KEY = 'userscript-utils:reddit-muting-enabled';
   const REDDIT_MUTE_STYLE_ID = 'userscript-utils-reddit-mute-style';
@@ -209,6 +211,10 @@ video::-webkit-media-controls-overlay-enclosure {
     hideGrokNav: true,
     hideRightSidebar: true,
     hidePostGrokButtons: true
+  });
+  const DEFAULT_YOUTUBE_UI_SETTINGS = Object.freeze({
+    hideComments: true,
+    hideRecommendations: true
   });
   const DARK_MODE_LABELS = Object.freeze({
     [DARK_MODE_OFF]: 'Off',
@@ -383,6 +389,8 @@ iframe {
   let gPendingTimer = null;
   let xSettings = { ...DEFAULT_X_SETTINGS };
   let xSettingsInputs = null;
+  let youtubeUiSettings = { ...DEFAULT_YOUTUBE_UI_SETTINGS };
+  let youtubeUiInputs = null;
   let redditMutedUsers = [];
   let redditMutingEnabled = true;
   let redditMuteObserver = null;
@@ -1639,6 +1647,137 @@ iframe {
     }
   };
 
+  const loadYoutubeUiSettings = () => {
+    const settings = { ...DEFAULT_YOUTUBE_UI_SETTINGS };
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(YOUTUBE_UI_SETTINGS_KEY) || '{}');
+      if (parsed && typeof parsed === 'object') {
+        for (const key of Object.keys(settings)) {
+          if (typeof parsed[key] === 'boolean') settings[key] = parsed[key];
+        }
+      }
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to load YouTube UI settings:', err);
+    }
+    return settings;
+  };
+
+  const updateYoutubeUiInputs = () => {
+    if (!youtubeUiInputs) return;
+    youtubeUiInputs.forEach((input, key) => {
+      input.checked = youtubeUiSettings[key];
+    });
+  };
+
+  const ensureYoutubeUiStyle = () => {
+    if (document.getElementById(YOUTUBE_UI_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = YOUTUBE_UI_STYLE_ID;
+    style.textContent = `
+ytd-watch-flexy #comments.chr-utils-youtube-covered,
+ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
+  position: relative !important;
+}
+.chr-utils-youtube-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 2147483646;
+  box-sizing: border-box;
+  background: #0f0f0f;
+  display: block;
+  text-align: center;
+  pointer-events: auto;
+}
+.chr-utils-youtube-cover button {
+  position: sticky;
+  top: 80px;
+  display: inline-block;
+  margin: 16px auto;
+  padding: 9px 16px;
+  border: 1px solid #666;
+  border-radius: 18px;
+  background: #272727;
+  color: #fff;
+  font: 14px Arial, sans-serif;
+  cursor: pointer;
+}
+.chr-utils-youtube-cover button:hover,
+.chr-utils-youtube-cover button:focus-visible {
+  background: #3f3f3f;
+  outline: 2px solid #aaa;
+}
+`;
+    (document.head || document.documentElement).appendChild(style);
+  };
+
+  const applyYoutubeUiSettings = () => {
+    if (!isYouTubeHost()) return;
+    ensureYoutubeUiStyle();
+    const sections = [
+      ['hideComments', 'ytd-watch-flexy #comments', 'comments'],
+      ['hideRecommendations', 'ytd-watch-flexy #secondary-inner > #related', 'recommendations']
+    ];
+    for (const [key, selector, label] of sections) {
+      for (const section of document.querySelectorAll(selector)) {
+        const cover = Array.from(section.children).find((child) => child.classList.contains('chr-utils-youtube-cover'));
+        if (!youtubeUiSettings[key]) {
+          if (cover) cover.remove();
+          section.classList.remove('chr-utils-youtube-covered');
+          continue;
+        }
+        section.classList.add('chr-utils-youtube-covered');
+        if (cover) continue;
+        const overlay = document.createElement('div');
+        overlay.className = 'chr-utils-youtube-cover';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = `Show ${label}`;
+        button.setAttribute('aria-label', `Show ${label} and update YouTube UI settings`);
+        button.addEventListener('click', () => setYoutubeUiSetting(key, false));
+        overlay.appendChild(button);
+        section.appendChild(overlay);
+      }
+    }
+  };
+
+  const setYoutubeUiSetting = (key, checked) => {
+    if (!(key in DEFAULT_YOUTUBE_UI_SETTINGS)) return;
+    youtubeUiSettings[key] = Boolean(checked);
+    try {
+      window.localStorage.setItem(YOUTUBE_UI_SETTINGS_KEY, JSON.stringify(youtubeUiSettings));
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save YouTube UI settings:', err);
+    }
+    updateYoutubeUiInputs();
+    applyYoutubeUiSettings();
+  };
+
+  const installYoutubeUiMode = () => {
+    if (!isYouTubeHost() || !isTopLevelPage()) return;
+    ensureYoutubeUiStyle();
+    const start = () => {
+      applyYoutubeUiSettings();
+      let scanPending = false;
+      const observer = new MutationObserver((mutations) => {
+        if (!mutations.some((mutation) => Array.from(mutation.addedNodes).some((node) =>
+          node.nodeType === 1 && !node.classList.contains('chr-utils-youtube-cover') &&
+          !node.closest('.chr-utils-youtube-cover')))) return;
+        if (scanPending) return;
+        scanPending = true;
+        window.requestAnimationFrame(() => {
+          scanPending = false;
+          applyYoutubeUiSettings();
+        });
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start, { once: true });
+    } else {
+      start();
+    }
+  };
+
   const loadXSettings = () => {
     const settings = { ...DEFAULT_X_SETTINGS };
     try {
@@ -2249,6 +2388,7 @@ iframe {
   vimiumLiteEnabled = loadVimiumLiteEnabled();
   rightClickPriority = loadRightClickPriority();
   xSettings = loadXSettings();
+  youtubeUiSettings = loadYoutubeUiSettings();
   redditMutedUsers = loadRedditMutedUsers();
   redditMutingEnabled = loadRedditMutingEnabled();
   darkModeSiteMap = loadDarkModeSiteMap();
@@ -2916,6 +3056,36 @@ iframe {
     ytDesc.textContent = 'Scan loaded YouTube cards, filter by views/time, and copy JSON/URLs.';
     ytSection.append(ytTitle, ytBtn, ytDesc);
 
+    const ytUiSection = document.createElement('div');
+    ytUiSection.className = 'utils-section';
+    const ytUiTitle = document.createElement('h3');
+    ytUiTitle.textContent = 'YouTube UI Settings';
+    youtubeUiInputs = new Map();
+    const makeYoutubeUiToggle = (key, label) => {
+      const row = document.createElement('label');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.gap = '8px';
+      row.style.margin = '8px 0';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = youtubeUiSettings[key];
+      input.addEventListener('change', () => setYoutubeUiSetting(key, input.checked));
+      youtubeUiInputs.set(key, input);
+      const text = document.createElement('span');
+      text.textContent = label;
+      row.append(input, text);
+      return row;
+    };
+    const ytUiDesc = document.createElement('p');
+    ytUiDesc.textContent = 'Covers these areas on watch pages. Show buttons reveal them and save your choice.';
+    ytUiSection.append(
+      ytUiTitle,
+      makeYoutubeUiToggle('hideComments', 'Hide comments'),
+      makeYoutubeUiToggle('hideRecommendations', 'Hide recommendations'),
+      ytUiDesc
+    );
+
     const linkMonitorSection = document.createElement('div');
     linkMonitorSection.className = 'utils-section';
     const linkMonitorTitle = document.createElement('h3');
@@ -2948,7 +3118,7 @@ iframe {
 
     panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, pageNotesSection);
     if (isXHost()) panel.appendChild(xSection);
-    if (isYouTubeHost()) panel.appendChild(ytSection);
+    if (isYouTubeHost()) panel.append(ytSection, ytUiSection);
     panel.append(linkMonitorSection, requestMonitorSection);
     if (isRedditHost()) panel.appendChild(redditMuteSection);
     panel.appendChild(footer);
@@ -6465,6 +6635,7 @@ iframe {
 
   setRightClickMode(rightClickMode);
   applyXSettings();
+  installYoutubeUiMode();
   installRedditMuteMode();
   document.addEventListener('focusin', (event) => {
     rememberForcePasteTarget(event.target);
@@ -7548,6 +7719,12 @@ iframe {
       }
     }
     window.addEventListener('storage', (event) => {
+      if (event.key === YOUTUBE_UI_SETTINGS_KEY) {
+        youtubeUiSettings = loadYoutubeUiSettings();
+        updateYoutubeUiInputs();
+        applyYoutubeUiSettings();
+        return;
+      }
       if (typeof event.newValue !== 'string') return;
       try {
         if (event.key === PAGE_NOTES_KEY) applySyncedPageNotes(JSON.parse(event.newValue));

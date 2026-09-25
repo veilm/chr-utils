@@ -35,7 +35,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - Link monitor popup panel (50ms `<a href>` scan, multiple regex filters, deduped match list, copy/clear actions, and per-site regex/match persistence across page navigation and panel reopen)
 - Request monitor popup panel (logs page request URLs from `fetch`, `XMLHttpRequest`, media elements, and resource timing, persistent regex filters, copy/clear actions)
 - Claude: the notepad appears automatically as a safe composer where Enter always inserts a newline; drafts autosave per chat and can be explicitly loaded into Claude's real composer without sending
-- Claude conversation export: the Alt+Shift+Q menu copies the currently selected conversation branch as Markdown with User and Claude headings. It scrolls through Claude's virtualized transcript to collect every message, restores the scroll position, and reports an error if any message is missing.
+- Claude conversation export: the Alt+Shift+Q menu copies the currently selected conversation branch as Markdown with Human and Claude headings. It scrolls through Claude's virtualized transcript to collect every message, restores the scroll position, and reports an error if any message is missing.
 
 ## Files
 

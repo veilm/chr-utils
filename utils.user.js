@@ -2054,7 +2054,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
         const content = user || assistant.querySelector('[data-cds="Prose"]');
         if (!content) continue;
         const body = content.innerText.trim();
-        messages.set(index, { role: user ? 'User' : 'Claude', body: body || '[Non-text content]' });
+        messages.set(index, { role: user ? 'Human' : 'Claude', body: body || '[Non-text content]' });
       }
     };
     const scrollAndCapture = async (top) => {

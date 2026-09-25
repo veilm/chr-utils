@@ -23,7 +23,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
   - f to show clickable-element hints, including editable fields; text inputs/textareas are focused for typing
   - hint labels stay fixed-width per page; if any two-letter hints are needed, all hints become two letters
   - F to show clickable-element hints and open links in a new tab
-- Site-specific Alt+Shift+Q sections appear only on their matching sites: X settings on X/Twitter, YouTube video analysis and UI settings on YouTube, and muted users on Reddit
+- Site-specific Alt+Shift+Q sections appear only on their matching sites: X settings on X/Twitter, YouTube video analysis and UI settings on YouTube, muted users on Reddit, and conversation export on Claude
 - X settings panel (persistent): hide selected left-nav entries, hide right sidebar, and hide Grok action buttons on posts
 - Reddit muted-users mode: mute directly beside any feed-post author, maintain a persistent Reddit-wide username list that synchronizes live across open tabs, import newline-separated usernames by paste or TXT file, export the list as TXT, and replace muted posts with compact placeholders that can unmute them in place
 - Dark mode presets: `Midnight` (direct recolor), `Invert` (full-page invert), and `Amber` (warm sepia-like recolor)
@@ -35,6 +35,7 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - Link monitor popup panel (50ms `<a href>` scan, multiple regex filters, deduped match list, copy/clear actions, and per-site regex/match persistence across page navigation and panel reopen)
 - Request monitor popup panel (logs page request URLs from `fetch`, `XMLHttpRequest`, media elements, and resource timing, persistent regex filters, copy/clear actions)
 - Claude: the notepad appears automatically as a safe composer where Enter always inserts a newline; drafts autosave per chat and can be explicitly loaded into Claude's real composer without sending
+- Claude conversation export: the Alt+Shift+Q menu copies the currently selected conversation branch as Markdown with User and Claude headings. It scrolls through Claude's virtualized transcript to collect every message, restores the scroll position, and reports an error if any message is missing.
 
 ## Files
 

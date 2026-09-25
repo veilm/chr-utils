@@ -353,7 +353,6 @@ iframe {
   let forcePasteTarget = null;
   const consumedUtilityKeyups = new Set();
   let vimiumLiteEnabled = true;
-  let vimiumLiteButton = null;
   let ytVideoLastResults = [];
   let ytVideoOverlayState = null;
   let xSettingsOverlayState = null;
@@ -2028,6 +2027,76 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     }
   };
 
+  const exportClaudeConversation = async () => {
+    const transcript = document.querySelector('[data-perf-region="transcript"]');
+    if (!transcript) throw new Error('Claude conversation not found.');
+
+    let scroller = transcript.parentElement;
+    while (scroller && scroller.scrollHeight <= scroller.clientHeight + 1) {
+      scroller = scroller.parentElement;
+    }
+    if (!scroller) throw new Error('Claude conversation scroller not found.');
+
+    const originalScrollTop = scroller.scrollTop;
+    const messages = new Map();
+    let expectedRows = 0;
+    const capture = () => {
+      for (const row of transcript.querySelectorAll('[data-testid="transcript-row"][data-index]')) {
+        const index = Number(row.dataset.index);
+        if (!Number.isInteger(index) || index < 0) continue;
+        const fromTail = Number(row.dataset.perfRowFromTail);
+        if (Number.isInteger(fromTail)) expectedRows = Math.max(expectedRows, index + fromTail + 1);
+        else expectedRows = Math.max(expectedRows, index + 1);
+
+        const user = row.querySelector('[data-testid="user-message"]');
+        const assistant = row.querySelector('[data-testid="assistant-message"]');
+        if (!user && !assistant) continue;
+        const content = user || assistant.querySelector('[data-cds="Prose"]');
+        if (!content) continue;
+        const body = content.innerText.trim();
+        messages.set(index, { role: user ? 'User' : 'Claude', body: body || '[Non-text content]' });
+      }
+    };
+    const scrollAndCapture = async (top) => {
+      scroller.scrollTo({ top, behavior: 'instant' });
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+      capture();
+    };
+
+    try {
+      await scrollAndCapture(0);
+      const step = Math.max(200, scroller.clientHeight * 0.6);
+      for (let top = step, attempts = 0; attempts < 200; top += step, attempts++) {
+        await scrollAndCapture(Math.min(top, scroller.scrollHeight));
+        if (messages.size >= expectedRows) break;
+        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) break;
+      }
+      if (messages.size < expectedRows) {
+        for (let top = scroller.scrollHeight, attempts = 0; top > 0 && attempts < 200; top -= step / 2, attempts++) {
+          await scrollAndCapture(Math.max(0, top));
+          if (messages.size >= expectedRows) break;
+        }
+      }
+    } finally {
+      scroller.scrollTo({ top: originalScrollTop, behavior: 'instant' });
+    }
+
+    const missing = Array.from({ length: expectedRows }, (_, index) => index).filter((index) => !messages.has(index));
+    if (missing.length) throw new Error(`Claude export incomplete: ${missing.length} message${missing.length === 1 ? '' : 's'} could not be captured.`);
+    if (!messages.size) throw new Error('No Claude messages found.');
+
+    const title = document.title.replace(/\s+- Claude$/, '').trim() || 'Claude conversation';
+    const markdown = [`# ${title}`, '', `Source: ${window.location.href}`, ''];
+    for (const index of [...messages.keys()].sort((a, b) => a - b)) {
+      const message = messages.get(index);
+      markdown.push(`## ${message.role}`, '', message.body, '');
+    }
+    if (!await copyTextToClipboard(markdown.join('\n').trimEnd() + '\n')) {
+      throw new Error('Could not copy the Claude conversation.');
+    }
+    return messages.size;
+  };
+
   const getClaudeComposerDraftKey = () => {
     const chatMatch = window.location.pathname.match(/^\/chat\/([^/?#]+)/);
     const pageKey = chatMatch ? `chat:${chatMatch[1]}` : `page:${window.location.pathname}`;
@@ -2408,13 +2477,6 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     }
   };
 
-  const updateVimiumLiteButton = () => {
-    if (!vimiumLiteButton) return;
-    vimiumLiteButton.textContent = vimiumLiteEnabled ? 'Vimium Lite: On' : 'Vimium Lite: Off';
-    vimiumLiteButton.classList.toggle('active', vimiumLiteEnabled);
-    vimiumLiteButton.classList.toggle('secondary', !vimiumLiteEnabled);
-  };
-
   const toggleVimiumLite = ({ persist = true, feedback = false } = {}) => {
     vimiumLiteEnabled = !vimiumLiteEnabled;
     if (!vimiumLiteEnabled) {
@@ -2424,7 +2486,6 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     if (persist) {
       saveVimiumLiteEnabled();
     }
-    updateVimiumLiteButton();
     if (feedback) {
       showCopyToast(vimiumLiteEnabled ? 'Vimium Lite: enabled (this page)' : 'Vimium Lite: disabled (this page)');
     }
@@ -2871,20 +2932,28 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
       rightClickListEl
     );
 
-    const navSection = document.createElement('div');
-    navSection.className = 'utils-section';
-    const navTitle = document.createElement('h3');
-    navTitle.textContent = 'Navigation';
-    vimiumLiteButton = document.createElement('button');
-    vimiumLiteButton.type = 'button';
-    vimiumLiteButton.className = 'utils-btn';
-    vimiumLiteButton.addEventListener('click', () => {
-      toggleVimiumLite({ persist: true, feedback: false });
+    const claudeSection = document.createElement('div');
+    claudeSection.className = 'utils-section';
+    const claudeTitle = document.createElement('h3');
+    claudeTitle.textContent = 'Claude Conversation';
+    const claudeExportButton = document.createElement('button');
+    claudeExportButton.type = 'button';
+    claudeExportButton.className = 'utils-btn';
+    claudeExportButton.textContent = 'Copy conversation as Markdown';
+    claudeExportButton.addEventListener('click', async () => {
+      claudeExportButton.disabled = true;
+      claudeExportButton.textContent = 'Collecting messages...';
+      try {
+        const count = await exportClaudeConversation();
+        showCopyToast(`Copied ${count} Claude message${count === 1 ? '' : 's'} as Markdown.`);
+      } catch (error) {
+        showCopyToast(error.message || 'Claude export failed.');
+      } finally {
+        claudeExportButton.disabled = false;
+        claudeExportButton.textContent = 'Copy conversation as Markdown';
+      }
     });
-    updateVimiumLiteButton();
-    const navDesc = document.createElement('p');
-    navDesc.textContent = 'J/K scroll, G/big G jump, and numeric prefixes for speed. Ctrl+Alt+I toggles Vimium Lite on this page.';
-    navSection.append(navTitle, vimiumLiteButton, navDesc);
+    claudeSection.append(claudeTitle, claudeExportButton);
 
     const darkModeSection = document.createElement('div');
     darkModeSection.className = 'utils-section';
@@ -3116,7 +3185,8 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     footer.className = 'utils-footer';
     footer.textContent = `Toggle with ${TOGGLE_HINT}.`;
 
-    panel.append(header, rightClickSection, navSection, darkModeSection, auditSection, pageNotesSection);
+    panel.append(header, rightClickSection, darkModeSection, auditSection, pageNotesSection);
+    if (isClaudeHost()) panel.appendChild(claudeSection);
     if (isXHost()) panel.appendChild(xSection);
     if (isYouTubeHost()) panel.append(ytSection, ytUiSection);
     panel.append(linkMonitorSection, requestMonitorSection);
@@ -3162,20 +3232,23 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
       temp.style.top = '-1000px';
       document.body.appendChild(temp);
       temp.select();
-      document.execCommand('copy');
+      const copied = document.execCommand('copy');
       temp.remove();
+      return copied;
     };
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(text);
+        return true;
       } else {
-        fallbackCopy();
+        return fallbackCopy();
       }
     } catch (err) {
       try {
-        fallbackCopy();
+        return fallbackCopy();
       } catch (fallbackErr) {
         console.error('Clipboard copy failed:', err, fallbackErr);
+        return false;
       }
     }
   };

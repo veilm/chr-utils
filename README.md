@@ -36,14 +36,14 @@ Small userscript that provides a global utility menu plus a lightweight Vimium-s
 - Request monitor popup panel (logs page request URLs from `fetch`, `XMLHttpRequest`, media elements, and resource timing, persistent regex filters, copy/clear actions)
 - Claude: the notepad appears automatically as a safe composer where Enter always inserts a newline; drafts autosave per chat and can be explicitly loaded into Claude's real composer without sending
 - Claude conversation export: the Alt+Shift+Q menu copies the currently selected conversation branch as Markdown with Human and Claude headings. It scrolls through Claude's virtualized transcript to collect every message, restores the scroll position, and reports an error if any message is missing.
-- ChatGPT conversation export: the same menu action copies the current branch with Human and ChatGPT headings. It preserves rendered headings, lists, links, tables, quotes, and code blocks, supports both conversation-turn and timeline layouts (including collapsed user prompts), scans virtualized turns, restores the scroll position, and reports an error if any turn is missing. It reads the DOM without making direct ChatGPT backend/API requests.
+- ChatGPT conversation export: the same menu action copies the current branch with Human and ChatGPT headings. It preserves rendered headings, lists, links, tables, quotes, and code blocks, supports both conversation-turn and timeline layouts (including collapsed user prompts), scans virtualized turns, restores the scroll position, and reports an error if any turn is missing. It reads the DOM without making direct ChatGPT backend/API requests. Copying uses the same permission-free path as right-click Copy+Log, with the authenticated local helper as a fallback after long scans; it does not request site clipboard access.
 
 ## Files
 
 - utils.user.js: main userscript
 - install.sh: install helper
 - wrapper.js: wrapper script
-- server.py: local FastAPI helper (required for clipboard URL open, force paste, and note-binding file appends)
+- server.py: local FastAPI helper (required for clipboard URL open, force paste, note-binding file appends, and clipboard copying when the browser copy fallback is unavailable)
 
 ## Local server
 

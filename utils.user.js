@@ -3460,20 +3460,23 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
       temp.remove();
       return copied;
     };
+    // This path is shared with right-click Copy+Log and needs no site permission.
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
-        return true;
-      } else {
-        return fallbackCopy();
-      }
+      if (fallbackCopy()) return true;
+    } catch {}
+    // A long conversation scan can outlive the browser's user activation.
+    // Write through the existing authenticated local helper in that case;
+    // never request clipboard access on behalf of the page.
+    try {
+      const bytes = new TextEncoder().encode(text);
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      const encoded = btoa(binary);
+      await runLocalCommand(`printf %s '${encoded}' | base64 --decode | wl-copy --type text/plain`, 5000);
+      return true;
     } catch (err) {
-      try {
-        return fallbackCopy();
-      } catch (fallbackErr) {
-        console.error('Clipboard copy failed:', err, fallbackErr);
-        return false;
-      }
+      console.error('Clipboard copy failed:', err);
+      return false;
     }
   };
 

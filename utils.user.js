@@ -2104,12 +2104,12 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
       if (node.nodeType === Node.TEXT_NODE) return node.textContent;
       if (node.nodeType !== Node.ELEMENT_NODE) return '';
       const tag = node.tagName.toLowerCase();
-      if (['button', 'svg', 'script', 'style'].includes(tag) || node.getAttribute('aria-hidden') === 'true') return '';
+      if (['button', 'svg', 'script', 'style'].includes(tag) || node.getAttribute('aria-hidden') === 'true' || node.dataset.markdownCopy === 'exclude') return '';
       const content = () => [...node.childNodes].map(inline).join('');
       if (tag === 'br') return '\n';
       if (tag === 'strong' || tag === 'b') return `**${content()}**`;
       if (tag === 'em' || tag === 'i') return `*${content()}*`;
-      if (tag === 'code') {
+      if (tag === 'code' || node.dataset.markdownCopy === 'inline-code') {
         const value = node.textContent;
         const fence = '`'.repeat(Math.max(1, ...[...value.matchAll(/`+/g)].map((match) => match[0].length + 1)));
         return `${fence}${value}${fence}`;
@@ -2124,12 +2124,12 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     const block = (node) => {
       if (node.nodeType !== Node.ELEMENT_NODE) return '';
       const tag = node.tagName.toLowerCase();
-      if (['button', 'svg', 'script', 'style'].includes(tag) || node.getAttribute('aria-hidden') === 'true') return '';
+      if (['button', 'svg', 'script', 'style'].includes(tag) || node.getAttribute('aria-hidden') === 'true' || node.dataset.markdownCopy === 'exclude') return '';
       if (/^h[1-6]$/.test(tag)) return `${'#'.repeat(Number(tag[1]))} ${inline(node).trim()}`;
       if (tag === 'p') return inline(node).trim();
       if (tag === 'hr') return '---';
-      if (tag === 'pre') {
-        const code = node.querySelector('code');
+      if (tag === 'pre' || node.dataset.markdownCopy === 'code-block') {
+        const code = node.querySelector('[data-code-block-source] code, code');
         const value = (code || node).textContent.replace(/\n$/, '');
         const fence = '`'.repeat(Math.max(3, ...[...value.matchAll(/`+/g)].map((match) => match[0].length + 1)));
         const language = code?.className.match(/language-([\w+-]+)/)?.[1] || '';
@@ -2158,7 +2158,86 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     return [...root.children].map(block).filter(Boolean).join('\n\n').trim();
   };
 
+  const captureChatGPTTimeline = async () => {
+    const turnSelector = '[data-turn-key]';
+    const scroller = document.querySelector('[data-app-action-timeline-scroll]');
+    if (!scroller) throw new Error('ChatGPT conversation scroller not found.');
+    const originalScrollTop = scroller.scrollTop;
+    const messages = new Map();
+    const turnKeys = new Set();
+    const incomplete = new Set();
+    const capture = () => {
+      for (const turn of scroller.querySelectorAll(turnSelector)) {
+        const key = turn.dataset.turnKey;
+        turnKeys.add(key);
+        const content = [...turn.querySelectorAll('[data-user-message-bubble], [data-conversation-role="assistant"]')];
+        if (!content.length) continue;
+        content.forEach((marker, index) => {
+          const root = marker.hasAttribute('data-user-message-bubble')
+            ? marker : marker.parentElement.querySelector('[data-markdown-text-style="assistant-message"]');
+          const id = `${key}:${index}`;
+          if (!root) {
+            incomplete.add(id);
+            return;
+          }
+          const user = root.hasAttribute('data-user-message-bubble');
+          // textContent includes the full user prompt even when Show more clips it.
+          const body = user
+            ? (root.querySelector('[data-search-result-target]') || root).textContent.trim()
+            : chatGPTMarkdownFromDOM(root);
+          if (!body) {
+            incomplete.add(id);
+            return;
+          }
+          incomplete.delete(id);
+          messages.set(id, { key, role: user ? 'Human' : 'ChatGPT', body });
+        });
+      }
+    };
+    const settle = () => new Promise((resolve) => window.setTimeout(resolve, 250));
+    try {
+      // Read only the rendered timeline; never fetch conversation data ourselves.
+      scroller.scrollTo({ top: 0, behavior: 'instant' });
+      await settle();
+      capture();
+      // Each stable turn wrapper may contain both sides of an exchange.
+      for (const turn of scroller.querySelectorAll(turnSelector)) {
+        turn.scrollIntoView({ block: 'start', behavior: 'instant' });
+        await settle();
+        capture();
+      }
+      const step = Math.max(200, scroller.clientHeight * 0.6);
+      for (let top = 0, attempts = 0; attempts < 400; top += step, attempts++) {
+        scroller.scrollTo({ top, behavior: 'instant' });
+        await settle();
+        capture();
+        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) break;
+        if (attempts === 399) throw new Error('ChatGPT export incomplete: timeline scan limit reached.');
+      }
+      const turns = [...scroller.querySelectorAll(turnSelector)];
+      const order = new Map(turns.map((turn, index) => [turn.dataset.turnKey, index]));
+      const missing = [...turnKeys].filter((key) => ![...messages.values()].some((message) => message.key === key));
+      if (missing.length || incomplete.size) throw new Error('ChatGPT export incomplete: some messages could not be captured.');
+      return [...messages.values()].sort((a, b) => (order.get(a.key) ?? Infinity) - (order.get(b.key) ?? Infinity));
+    } finally {
+      scroller.scrollTo({ top: originalScrollTop, behavior: 'instant' });
+    }
+  };
+
+  const copyChatGPTMessages = async (messages) => {
+    if (!messages.length) throw new Error('No ChatGPT messages found.');
+    const markdown = [`# ${document.title.trim() || 'ChatGPT conversation'}`, '', `Source: ${window.location.href}`, ''];
+    for (const message of messages) markdown.push(`## ${message.role}`, '', message.body, '');
+    if (!await copyTextToClipboard(markdown.join('\n').trimEnd() + '\n')) {
+      throw new Error('Could not copy the ChatGPT conversation.');
+    }
+    return messages.length;
+  };
+
   const exportChatGPTConversation = async () => {
+    if (document.querySelector('[data-app-action-timeline-scroll] [data-turn-key]')) {
+      return copyChatGPTMessages(await captureChatGPTTimeline());
+    }
     const turnSelector = 'section[data-testid^="conversation-turn-"][data-turn]';
     const firstTurn = document.querySelector(turnSelector);
     if (!firstTurn) throw new Error('ChatGPT conversation not found.');
@@ -2215,15 +2294,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     if (missing.length) throw new Error(`ChatGPT export incomplete: ${missing.length} turn${missing.length === 1 ? '' : 's'} could not be captured.`);
     if (!messages.size) throw new Error('No ChatGPT messages found.');
 
-    const markdown = [`# ${document.title.trim() || 'ChatGPT conversation'}`, '', `Source: ${window.location.href}`, ''];
-    for (const number of [...messages.keys()].sort((a, b) => a - b)) {
-      const message = messages.get(number);
-      markdown.push(`## ${message.role}`, '', message.body, '');
-    }
-    if (!await copyTextToClipboard(markdown.join('\n').trimEnd() + '\n')) {
-      throw new Error('Could not copy the ChatGPT conversation.');
-    }
-    return messages.size;
+    return copyChatGPTMessages([...messages.keys()].sort((a, b) => a - b).map((number) => messages.get(number)));
   };
 
   const getClaudeComposerDraftKey = () => {

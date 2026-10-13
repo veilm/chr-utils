@@ -3472,7 +3472,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
       let binary = '';
       for (const byte of bytes) binary += String.fromCharCode(byte);
       const encoded = btoa(binary);
-      await runLocalCommand(`printf %s '${encoded}' | base64 --decode | wl-copy --type text/plain`, 5000);
+      await runLocalCommand(`printf %s '${encoded}' | base64 --decode | wl-copy --type text/plain >/dev/null 2>&1`, 5000);
       return true;
     } catch (err) {
       console.error('Clipboard copy failed:', err);

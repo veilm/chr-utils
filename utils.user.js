@@ -390,6 +390,8 @@ iframe {
   let xSettingsInputs = null;
   let youtubeUiSettings = { ...DEFAULT_YOUTUBE_UI_SETTINGS };
   let youtubeUiInputs = null;
+  const youtubeUiRevealedSections = new Set();
+  let youtubeUiPageUrl = window.location.href;
   let redditMutedUsers = [];
   let redditMutingEnabled = true;
   let redditMuteObserver = null;
@@ -1711,6 +1713,10 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
 
   const applyYoutubeUiSettings = () => {
     if (!isYouTubeHost()) return;
+    if (youtubeUiPageUrl !== window.location.href) {
+      youtubeUiPageUrl = window.location.href;
+      youtubeUiRevealedSections.clear();
+    }
     ensureYoutubeUiStyle();
     const sections = [
       ['hideComments', 'ytd-watch-flexy #comments', 'comments'],
@@ -1719,7 +1725,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     for (const [key, selector, label] of sections) {
       for (const section of document.querySelectorAll(selector)) {
         const cover = Array.from(section.children).find((child) => child.classList.contains('chr-utils-youtube-cover'));
-        if (!youtubeUiSettings[key]) {
+        if (!youtubeUiSettings[key] || youtubeUiRevealedSections.has(key)) {
           if (cover) cover.remove();
           section.classList.remove('chr-utils-youtube-covered');
           continue;
@@ -1731,8 +1737,11 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = `Show ${label}`;
-        button.setAttribute('aria-label', `Show ${label} and update YouTube UI settings`);
-        button.addEventListener('click', () => setYoutubeUiSetting(key, false));
+        button.setAttribute('aria-label', `Show ${label} for this page`);
+        button.addEventListener('click', () => {
+          youtubeUiRevealedSections.add(key);
+          applyYoutubeUiSettings();
+        });
         overlay.appendChild(button);
         section.appendChild(overlay);
       }
@@ -1741,6 +1750,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
 
   const setYoutubeUiSetting = (key, checked) => {
     if (!(key in DEFAULT_YOUTUBE_UI_SETTINGS)) return;
+    youtubeUiRevealedSections.delete(key);
     youtubeUiSettings[key] = Boolean(checked);
     try {
       window.localStorage.setItem(YOUTUBE_UI_SETTINGS_KEY, JSON.stringify(youtubeUiSettings));
@@ -3370,7 +3380,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
       return row;
     };
     const ytUiDesc = document.createElement('p');
-    ytUiDesc.textContent = 'Covers these areas on watch pages. Show buttons reveal them and save your choice.';
+    ytUiDesc.textContent = 'Checkboxes save your preferences. Show buttons reveal these areas only for the current page.';
     ytUiSection.append(
       ytUiTitle,
       makeYoutubeUiToggle('hideComments', 'Hide comments'),
@@ -8060,6 +8070,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     const nextUrl = window.location.href;
     if (nextUrl === lastWorkspaceUrl) return;
     lastWorkspaceUrl = nextUrl;
+    applyYoutubeUiSettings();
     pageNotePageUrl = nextUrl;
     pageNoteDismissedUrl = null;
     closePageNoteEditor({ restoreAlert: false });

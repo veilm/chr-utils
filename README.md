@@ -1,50 +1,81 @@
 # chr-utils
 
-Small userscript that provides a global utility menu plus a lightweight Vimium-style navigation layer.
+A Chromium userscript with a utility menu, quick commands, and optional Vimium-style navigation.
 
 ![Screenshot](https://sucralose.moe/static/chr-utils.jpg)
 
-## Features
+## Keyboard controls
 
-- Alt+Shift+Q opens the top-page menu even when an iframe is focused; it includes a right-click logger (disabled, copy+log, save-to-list) plus link/image priority toggle, whose mode, priority, and saved list persist per origin
-- Alt+Q opens a top-edge case-sensitive command hint for five seconds: the built-ins are lowercase; `n` toggles an autosaved floating notepad, `v` toggles Vimium Lite, `l` copies every page link href, `i` makes right-click copy image addresses, `p` force-pastes into the focused editable field (requires the local server), and `m` immediately marks the current URL as `done` (using `m` again edits it); uppercase `M` opens a new prefix-note editor with the current URL selected; shortcuts invoked while an iframe is focused are forwarded to the top page
-- Alt+P replaces the top-level tab with the clipboard URL (via local server), and Alt+Shift+P opens it in a new tab; both forward from focused iframes
-- Alt+Y copies the top-level page URL with a brief parent-page overlay confirmation, even when focus is inside an iframe
-- Utility-consumed shortcuts are intercepted at the window capture layer and suppress both their keydown and matching keyup so page bindings do not also act on them
-- Alt+Shift+Q and its tool panels remember their open state and dragged positions per tab across refreshes, same-origin page loads, and SPA route changes; page-analysis panels rebuild against the new page
-- Alt+Shift+A toggles a per-site dark mode; mode selection persists by host
-- Right-click list stored in local storage with copy/clear helpers
-- Instagram: periodically unblocks overlays above visible `<video>` elements so native controls remain clickable
-- Optional Vimium-lite navigation:
-  - remains active while the Alt+Shift+Q sidebar and tool panels are open; focused fields and utility-reserved keys still take precedence
-  - j/k smooth scrolling with numeric speed prefixes (e.g., 3j, 10k)
-  - gg to jump to top, Shift+G to jump to bottom
-  - g then j/k for bottom/top
-  - f to show clickable-element hints, including editable fields; text inputs/textareas are focused for typing
-  - hint labels stay fixed-width per page; if any two-letter hints are needed, all hints become two letters
-  - F to show clickable-element hints and open links in a new tab
-- Site-specific Alt+Shift+Q sections appear only on their matching sites: X settings on X/Twitter, YouTube video analysis and UI settings on YouTube, muted users on Reddit, and conversation export on Claude and ChatGPT
-- X settings panel (persistent): hide selected left-nav entries, hide right sidebar, and hide Grok action buttons on posts
-- Reddit muted-users mode: mute directly beside any feed-post author, maintain a persistent Reddit-wide username list that synchronizes live across open tabs, import newline-separated usernames by paste or TXT file, export the list as TXT, and replace muted posts with compact placeholders that can unmute them in place
-- Dark mode presets: `Midnight` (direct recolor), `Invert` (full-page invert), and `Amber` (warm sepia-like recolor)
-- Media Manager: group images, iframe sources, image link targets, and page links by host; persist Include/Neutral/Ignore policies per origin, preview groups on-page, inspect individual items, rescan dynamic pages, and copy deduplicated URLs or a JSON manifest
-- Page Notes: save an exact-URL or literal URL-prefix note from the Alt+Shift+Q menu or Alt+Q commands; both exact and prefix rules treat a trailing path slash as optional; Ctrl+Enter submits from anywhere in a note editor; note actions target the top-level page URL when invoked from an iframe; matching pages show a prominent, dismissible top-left notice and continuously moving, widely spaced diagonal line cues, including after refreshes and SPA navigation; note changes synchronize live between open tabs without polling
-- Global Note Bindings: configure case-sensitive custom Alt+Q letters that save a chosen exact-URL note, append the page URL to one or more absolute file paths through the authenticated local server, or do both; a custom letter overrides only the exact-case built-in quick action; the settings panel can export every page note to JSON, import a backup with labeled conflict merges, or batch-import plain-text URL lines under one shared note; plain-text conflicts retain the existing text and add a labeled Manual plain text note section, and large lists yield every 1,000 lines to keep the page responsive
-- YouTube video scan panel with filters (title, views, timestamp, URLs, normalized counts)
-- YouTube watch pages cover comments and recommendations by default while leaving their content in place; Show buttons reveal each section only for the current page, resetting on navigation or reload. Only the checkboxes in YouTube UI Settings save preferences.
-- Link monitor popup panel (50ms `<a href>` scan, multiple regex filters, deduped match list, copy/clear actions, and per-site regex/match persistence across page navigation and panel reopen)
-- Request monitor popup panel (logs page request URLs from `fetch`, `XMLHttpRequest`, media elements, and resource timing, persistent regex filters, copy/clear actions)
-- Claude: the notepad appears automatically as a safe composer where Enter always inserts a newline; drafts autosave per chat and can be explicitly loaded into Claude's real composer without sending
-- Claude conversation export: the Alt+Shift+Q menu copies the currently selected conversation branch as Markdown with Human and Claude headings. It scrolls through Claude's virtualized transcript to collect every message, restores the scroll position, and reports an error if any message is missing.
-- ChatGPT conversation export: the same menu action copies the current branch with Human and ChatGPT headings. It preserves rendered headings, lists, links, tables, quotes, and code blocks, supports both conversation-turn and timeline layouts (including collapsed user prompts), scans virtualized turns, restores the scroll position, and reports an error if any turn is missing. It reads the DOM without making direct ChatGPT backend/API requests. Copying uses the same permission-free path as right-click Copy+Log, with the authenticated local helper as a fallback after long scans; it does not request site clipboard access.
+**Alt+Shift+Q** opens the utility menu. **Alt+Q** opens a case-sensitive command hint for five seconds; press one of these letters:
 
-## Files
+| Key | Action |
+| --- | --- |
+| `n` | Toggle the autosaved floating notepad |
+| `v` | Toggle Vimium Lite for the current URL |
+| `V` (Shift+V) | Edit persistent Vimium Lite disabled URL prefixes |
+| `l` | Copy every page link URL |
+| `i` | Make right-click copy image addresses |
+| `p` | Paste into the focused editable field through the local helper |
+| `m` | Mark the current page `done`; press again to edit its note |
+| `M` (Shift+M) | Create a URL-prefix note |
 
-- utils.user.js: main userscript
-- install.sh: install helper
-- wrapper.js: wrapper script
-- server.py: local FastAPI helper (required for clipboard URL open, force paste, note-binding file appends, and clipboard copying when the browser copy fallback is unavailable)
+Other shortcuts:
 
-## Local server
+- **Alt+P** opens the clipboard URL in the current tab; **Alt+Shift+P** opens a new tab.
+- **Alt+Y** copies the top-level page URL with brief confirmation.
+- **Alt+Shift+A** toggles dark mode for the current host.
+- **Ctrl+Alt+I** also toggles Vimium Lite for the current URL.
 
-- Run `./server.py` to start the JS-shell bridge.
+Commands invoked inside an iframe are forwarded to the top page. Consumed shortcuts suppress both keydown and the matching keyup so page bindings do not also run. The menu and tool panels remember their open state and dragged positions per tab across refreshes, same-origin navigation, and SPA route changes; analysis panels rebuild against the new page.
+
+## Utility menu
+
+- **Right-click Logger:** disable it, copy and log a target URL, or save URLs to a list. Choose link or image priority. Settings and the list persist per origin; list controls appear once there are saved entries.
+- **Dark Mode:** Midnight recolors directly, Invert applies full-page inversion, and Amber applies a warm tint. Preferences persist per host.
+- **Media Manager:** group images, iframe sources, image link targets, and page links by host. Save Include/Neutral/Ignore policies per origin, preview groups, inspect items, rescan, and copy deduplicated URLs or a JSON manifest.
+- **Link Monitor:** scan links every 50 ms with multiple regex filters, deduplicate matches, and copy or clear results. Filters and matches persist per site across navigation and panel reopen.
+- **Request Monitor:** capture URLs from fetch, XMLHttpRequest, media elements, and resource timing, with persistent regex filters and copy/clear controls.
+
+## Notes and custom commands
+
+Page Notes support exact URLs and literal URL prefixes, treating a trailing path slash as optional. Matching pages show a dismissible notice and widely spaced moving diagonal cues, including after refresh and SPA navigation. Notes synchronize between open tabs without polling. Editors accept **Ctrl+Enter** to save; commands from iframes use the top-level URL.
+
+**Global Note Bindings** assigns case-sensitive Alt+Q letters to save an exact-page note, append the URL to one or more absolute file paths through the local helper, or do both. A custom letter overrides only the same-case built-in command.
+
+The settings panel can export all notes to JSON, restore a backup with labeled conflict merges, or import plain-text URL lines under one shared note. Plain-text conflicts preserve existing text and append a labeled Manual plain text note section. Large imports yield every 1,000 lines to keep the page responsive.
+
+## Vimium Lite
+
+Navigation remains active while utility panels are open; editable fields and utility-reserved keys take precedence.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` | Smooth scrolling; numeric prefixes adjust speed, such as `3j` or `10k` |
+| `gg` / Shift+G | Jump to the top / bottom |
+| `gk` / `gj` | Jump to the top / bottom |
+| `f` | Show clickable-element hints; editable targets receive typing focus |
+| `F` | Show hints and open links in a new tab |
+
+Hint labels have a fixed width per page: if any require two letters, all use two letters.
+
+Use **Alt+Q, Shift+V** to edit the disabled-prefix list. Enter one full URL prefix per line, then **Save prefixes**, or use **Ctrl+Enter**. **Add current page** saves its URL without the query or fragment. For example, `https://example.com/review/` covers every page below that path. Remove a line and save to restore navigation there. Escape closes the editor.
+
+Prefixes match from the start of the URL and persist in userscript storage. Changes synchronize between open tabs, with a refresh on tab focus for older loaders; per-origin local storage is used when userscript storage is unavailable. **Alt+Q, v** temporarily overrides the saved rule until navigation or reload. Disabling clears hints, scrolling, and pending numeric/g commands.
+
+## Site-specific tools
+
+These menu sections appear only on their matching sites:
+
+- **X/Twitter:** hide selected left-navigation entries, the right sidebar, and Grok actions on posts.
+- **Reddit:** mute beside any feed-post author, maintain a shared username list, import usernames by paste or TXT file, and export as TXT. Muted posts become compact placeholders with an unmute action; changes synchronize across open tabs.
+- **YouTube:** scan videos with title, view-count, timestamp, URL, and normalized-count filters. Comments and recommendations are covered by default; Show reveals a section for the current page only. Only the YouTube UI Settings checkboxes save preferences.
+- **Claude:** the floating notepad opens automatically as a safe composer where Enter inserts a newline. Drafts autosave per chat and can be loaded into the real composer without sending. Conversation export copies the selected branch as Markdown with Human and Claude headings, scans virtualized messages, restores scroll position, and reports missing messages.
+- **ChatGPT:** export the selected branch as Markdown with Human and ChatGPT headings, preserving headings, lists, tables, quotes, links, and code blocks. Export supports conversation-turn and timeline layouts, collapsed prompts, and virtualized turns; it restores scroll position and reports missing turns. It uses the rendered DOM and the normal permission-free clipboard path, with the authenticated helper as a fallback.
+
+An optional Instagram fix periodically unblocks overlays above visible videos so native controls remain clickable; it is disabled by default in the source.
+
+## Installation and local helper
+
+- `utils.user.js` is the main userscript.
+- `install.sh` prepares the disk-loading `wrapper.js` and installation instructions. Enable file URL access in the userscript extension.
+- Run `./server.py` for the local FastAPI helper. It supplies clipboard URL opening, force paste, note-binding file appends, and a fallback for copying when the browser clipboard path is unavailable.

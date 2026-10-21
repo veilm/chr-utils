@@ -133,6 +133,7 @@ video::-webkit-media-controls-overlay-enclosure {
   };
 
   const MENU_ID = 'userscript-utils-menu';
+  const VIMIUM_LITE_PANEL_ID = 'userscript-utils-vimium-settings';
   const STYLE_ID = 'userscript-utils-style';
   const COPY_TOAST_ID = 'userscript-utils-copy-toast';
   const COMMAND_HINT_ID = 'userscript-utils-command-hint';
@@ -151,6 +152,7 @@ video::-webkit-media-controls-overlay-enclosure {
   const RIGHT_CLICK_LIST_KEY = 'userscript-utils:right-click-list';
   const RIGHT_CLICK_MODE_KEY = 'userscript-utils:right-click-mode';
   const VIMIUM_LITE_KEY = 'userscript-utils:vimium-lite-enabled';
+  const VIMIUM_LITE_PREFIXES_KEY = 'userscript-utils:vimium-lite-disabled-prefixes:v1';
   const RIGHT_CLICK_PRIORITY_KEY = 'userscript-utils:right-click-priority';
   const MEDIA_MANAGER_POLICIES_KEY = 'userscript-utils:media-manager-policies:v1';
   const WORKSPACE_STATE_KEY = 'userscript-utils:workspace-state:v1';
@@ -169,6 +171,7 @@ video::-webkit-media-controls-overlay-enclosure {
     linkMonitor: 'link-monitor',
     requestMonitor: 'request-monitor',
     noteBindings: 'note-bindings',
+    vimiumSettings: 'vimium-settings',
     xSettings: 'x-settings',
     youtubeVideos: 'youtube-videos'
   });
@@ -353,6 +356,13 @@ iframe {
   let forcePasteTarget = null;
   const consumedUtilityKeyups = new Set();
   let vimiumLiteEnabled = true;
+  let vimiumLiteDefaultEnabled = true;
+  let vimiumLiteDisabledPrefixes = [];
+  let vimiumLitePageOverride = null;
+  let vimiumLitePageUrl = window.location.href;
+  let vimiumLiteStatusEl = null;
+  let vimiumLitePrefixesInput = null;
+  let vimiumLitePanelState = null;
   let ytVideoLastResults = [];
   let ytVideoOverlayState = null;
   let xSettingsOverlayState = null;
@@ -855,7 +865,7 @@ iframe {
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      #${MENU_ID} {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) {
         position: fixed;
         top: 18px;
         right: 18px;
@@ -873,18 +883,25 @@ iframe {
         padding: 14px 16px 12px;
         border: 1px solid rgba(255, 255, 255, 0.08);
       }
-      #${MENU_ID} .utils-header {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
         margin-bottom: 10px;
       }
-      #${MENU_ID} .utils-title {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) [hidden] {
+        display: none !important;
+      }
+      #${VIMIUM_LITE_PANEL_ID} .utils-help {
+        color: #b8b8b8;
+        margin: 6px 0 10px;
+      }
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-title {
         font-size: 15px;
         font-weight: 600;
         letter-spacing: 0.02em;
       }
-      #${MENU_ID} .utils-close {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-close {
         border: none;
         background: transparent;
         color: #f87171;
@@ -893,28 +910,28 @@ iframe {
         padding: 0;
         line-height: 1;
       }
-      #${MENU_ID} .utils-section {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-section {
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 0;
         padding: 10px 12px;
         margin-bottom: 10px;
         background: rgba(24, 24, 24, 0.92);
       }
-      #${MENU_ID} .utils-section:last-of-type {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-section:last-of-type {
         margin-bottom: 8px;
       }
-      #${MENU_ID} .utils-section h3 {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-section h3 {
         margin: 0 0 6px;
         font-size: 13px;
         text-transform: uppercase;
         letter-spacing: 0.08em;
         color: #cfcfcf;
       }
-      #${MENU_ID} .utils-section p {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-section p {
         margin: 6px 0 0;
         color: #b8b8b8;
       }
-      #${MENU_ID} .utils-btn {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-btn {
         cursor: pointer;
         border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 0;
@@ -924,19 +941,19 @@ iframe {
         background: #2d2d2d;
         color: #f5f5f5;
       }
-      #${MENU_ID} .utils-btn.secondary {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-btn.secondary {
         background: #1f1f1f;
       }
-      #${MENU_ID} .utils-btn.active {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-btn.active {
         background: #3a3a3a;
         border-color: rgba(255, 255, 255, 0.3);
       }
-      #${MENU_ID} .utils-btn-row {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-btn-row {
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
       }
-      #${MENU_ID} .utils-text-input {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-text-input {
         min-width: 0;
         flex: 1;
         border: 1px solid rgba(255, 255, 255, 0.16);
@@ -946,7 +963,7 @@ iframe {
         color: #f5f5f5;
         font: inherit;
       }
-      #${MENU_ID} .utils-textarea {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-textarea {
         box-sizing: border-box;
         width: 100%;
         min-height: 72px;
@@ -958,18 +975,18 @@ iframe {
         color: #f5f5f5;
         font: inherit;
       }
-      #${MENU_ID} .utils-list-row {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-list-row {
         display: flex;
         align-items: center;
         gap: 8px;
       }
-      #${MENU_ID} .utils-list-row + .utils-list-row {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-list-row + .utils-list-row {
         margin-top: 6px;
       }
-      #${MENU_ID} .utils-list-row > span {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-list-row > span {
         flex: 1;
       }
-      #${MENU_ID} .utils-list {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-list {
         margin-top: 8px;
         padding: 8px;
         border: 1px solid rgba(255, 255, 255, 0.08);
@@ -980,7 +997,7 @@ iframe {
         white-space: pre-wrap;
         word-break: break-word;
       }
-      #${MENU_ID} .utils-footer {
+      :is(#${MENU_ID}, #${VIMIUM_LITE_PANEL_ID}) .utils-footer {
         font-size: 12px;
         color: #9a9a9a;
       }
@@ -1194,13 +1211,23 @@ iframe {
     }
   };
 
-  const saveVimiumLiteEnabled = () => {
+  const normalizeVimiumLitePrefixes = (value) => Array.isArray(value)
+    ? [...new Set(value.filter((prefix) => typeof prefix === 'string').map((prefix) => prefix.trim()).filter(Boolean))]
+    : [];
+
+  const loadVimiumLitePrefixes = () => {
     try {
-      window.localStorage.setItem(VIMIUM_LITE_KEY, vimiumLiteEnabled ? 'true' : 'false');
+      const stored = typeof GM_getValue === 'function'
+        ? GM_getValue(VIMIUM_LITE_PREFIXES_KEY, [])
+        : JSON.parse(window.localStorage.getItem(VIMIUM_LITE_PREFIXES_KEY) || '[]');
+      return normalizeVimiumLitePrefixes(stored);
     } catch (err) {
-      console.warn('[userscript-utils] Failed to save vimium-lite setting:', err);
+      console.warn('[userscript-utils] Failed to load Vimium Lite URL prefixes:', err);
+      return [];
     }
   };
+
+  const getVimiumLiteDisabledPrefix = () => vimiumLiteDisabledPrefixes.find((prefix) => window.location.href.startsWith(prefix));
 
   const saveRightClickPriority = () => {
     try {
@@ -2664,7 +2691,9 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
   rightClickMode = loadRightClickMode();
   pageNotes = loadPageNotes();
   noteQuickBindings = loadNoteQuickBindings();
-  vimiumLiteEnabled = loadVimiumLiteEnabled();
+  vimiumLiteDefaultEnabled = loadVimiumLiteEnabled();
+  vimiumLiteDisabledPrefixes = loadVimiumLitePrefixes();
+  vimiumLiteEnabled = vimiumLiteDefaultEnabled && !getVimiumLiteDisabledPrefix();
   rightClickPriority = loadRightClickPriority();
   xSettings = loadXSettings();
   youtubeUiSettings = loadYoutubeUiSettings();
@@ -2678,6 +2707,8 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
   const updateRightClickListUI = () => {
     if (!rightClickListEl || !rightClickListCountEl) return;
     rightClickListCountEl.textContent = `${rightClickList.length} saved`;
+    rightClickListCountEl.parentElement.hidden = rightClickList.length === 0;
+    rightClickListEl.hidden = rightClickList.length === 0;
     rightClickListEl.textContent = rightClickList.join('\n');
     if (rightClickCopyBtn) {
       rightClickCopyBtn.disabled = rightClickList.length === 0;
@@ -2687,18 +2718,163 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     }
   };
 
-  const toggleVimiumLite = ({ persist = true, feedback = false } = {}) => {
-    vimiumLiteEnabled = !vimiumLiteEnabled;
-    if (!vimiumLiteEnabled) {
+  const updateVimiumLiteUI = () => {
+    if (vimiumLiteStatusEl) {
+      const prefix = getVimiumLiteDisabledPrefix();
+      const reason = vimiumLitePageOverride !== null ? 'temporary page override'
+        : prefix ? `URL prefix: ${prefix}` : 'default';
+      const status = `${vimiumLiteEnabled ? 'Enabled' : 'Disabled'} (${reason}).`;
+      if (vimiumLiteStatusEl.textContent !== status) vimiumLiteStatusEl.textContent = status;
+    }
+    if (vimiumLitePrefixesInput && vimiumLitePrefixesInput.dataset.dirty !== 'true') {
+      const value = vimiumLiteDisabledPrefixes.join('\n');
+      if (vimiumLitePrefixesInput.value !== value) vimiumLitePrefixesInput.value = value;
+    }
+  };
+
+  const refreshVimiumLiteState = () => {
+    if (window.location.href !== vimiumLitePageUrl) {
+      vimiumLitePageUrl = window.location.href;
+      vimiumLitePageOverride = null;
+    }
+    const enabled = vimiumLitePageOverride ?? (vimiumLiteDefaultEnabled && !getVimiumLiteDisabledPrefix());
+    if (vimiumLiteEnabled && !enabled) {
       stopScroll();
       restoreScrollBehaviorOverrides();
+      navJDown = false;
+      navKDown = false;
+      lastNavKey = null;
+      clearNumericPrefix();
+      clearGPending();
+      teardownLinkHints();
     }
-    if (persist) {
-      saveVimiumLiteEnabled();
+    vimiumLiteEnabled = enabled;
+    updateVimiumLiteUI();
+  };
+
+  const saveVimiumLitePrefixesFromInput = () => {
+    let prefixes;
+    try {
+      prefixes = normalizeVimiumLitePrefixes(vimiumLitePrefixesInput.value.split('\n')).map((prefix) => {
+        const url = new URL(prefix);
+        if (!['http:', 'https:', 'file:'].includes(url.protocol)) throw new Error('Use http, https, or file URLs.');
+        return url.href;
+      });
+      prefixes = normalizeVimiumLitePrefixes(prefixes);
+    } catch (err) {
+      showCopyToast('Enter one full URL prefix per line (http://, https://, or file:///).');
+      return;
     }
+    try {
+      if (typeof GM_setValue === 'function') GM_setValue(VIMIUM_LITE_PREFIXES_KEY, prefixes);
+      else window.localStorage.setItem(VIMIUM_LITE_PREFIXES_KEY, JSON.stringify(prefixes));
+    } catch (err) {
+      console.warn('[userscript-utils] Failed to save Vimium Lite URL prefixes:', err);
+      showCopyToast('Could not save Vimium Lite URL prefixes.');
+      return;
+    }
+    vimiumLiteDisabledPrefixes = prefixes;
+    vimiumLitePageOverride = null;
+    vimiumLitePrefixesInput.dataset.dirty = 'false';
+    refreshVimiumLiteState();
+    showCopyToast(`Saved ${prefixes.length} Vimium Lite disabled URL prefix${prefixes.length === 1 ? '' : 'es'}.`);
+  };
+
+  const toggleVimiumLite = ({ feedback = false } = {}) => {
+    refreshVimiumLiteState();
+    vimiumLitePageOverride = !vimiumLiteEnabled;
+    refreshVimiumLiteState();
     if (feedback) {
       showCopyToast(vimiumLiteEnabled ? 'Vimium Lite: enabled (this page)' : 'Vimium Lite: disabled (this page)');
     }
+  };
+
+  const closeVimiumLiteSettings = ({ remember = true } = {}) => {
+    if (vimiumLitePanelState) {
+      vimiumLitePanelState.detachDrag();
+      vimiumLitePanelState.panel.remove();
+      vimiumLitePanelState = null;
+      vimiumLiteStatusEl = null;
+      vimiumLitePrefixesInput = null;
+    }
+    if (remember) setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.vimiumSettings, false);
+  };
+
+  const openVimiumLiteSettings = () => {
+    if (vimiumLitePanelState?.panel.isConnected) {
+      vimiumLitePrefixesInput.focus();
+      return;
+    }
+    ensureStyle();
+    const panel = document.createElement('div');
+    panel.id = VIMIUM_LITE_PANEL_ID;
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Vimium Lite URL prefixes');
+    const header = document.createElement('div');
+    header.className = 'utils-header';
+    const title = document.createElement('div');
+    title.className = 'utils-title';
+    title.textContent = 'Vimium Lite prefixes';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'utils-close';
+    closeBtn.textContent = '\u2715';
+    closeBtn.setAttribute('aria-label', 'Close prefix editor');
+    closeBtn.addEventListener('click', () => closeVimiumLiteSettings());
+    header.append(title, closeBtn);
+    vimiumLiteStatusEl = document.createElement('p');
+    vimiumLiteStatusEl.setAttribute('role', 'status');
+    vimiumLiteStatusEl.style.overflowWrap = 'anywhere';
+    const label = document.createElement('label');
+    label.textContent = 'Disabled URL prefixes';
+    vimiumLitePrefixesInput = document.createElement('textarea');
+    vimiumLitePrefixesInput.className = 'utils-textarea';
+    vimiumLitePrefixesInput.rows = 4;
+    vimiumLitePrefixesInput.spellcheck = false;
+    vimiumLitePrefixesInput.placeholder = 'https://example.com/review/';
+    vimiumLitePrefixesInput.addEventListener('input', () => { vimiumLitePrefixesInput.dataset.dirty = 'true'; });
+    label.appendChild(vimiumLitePrefixesInput);
+    const help = document.createElement('p');
+    help.className = 'utils-help';
+    help.textContent = 'One prefix per line; omit ?query and #fragment to include all sections.';
+    const buttons = document.createElement('div');
+    buttons.className = 'utils-btn-row';
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'utils-btn';
+    saveBtn.textContent = 'Save prefixes';
+    saveBtn.addEventListener('click', saveVimiumLitePrefixesFromInput);
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'utils-btn secondary';
+    addBtn.textContent = 'Add current page';
+    addBtn.addEventListener('click', () => {
+      const url = new URL(window.location.href);
+      url.search = '';
+      url.hash = '';
+      vimiumLitePrefixesInput.value = normalizeVimiumLitePrefixes([
+        ...vimiumLitePrefixesInput.value.split('\n'), url.href
+      ]).join('\n');
+      vimiumLitePrefixesInput.dataset.dirty = 'true';
+      saveVimiumLitePrefixesFromInput();
+    });
+    buttons.append(saveBtn, addBtn);
+    panel.append(header, vimiumLiteStatusEl, label, help, buttons);
+    panel.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        consumeUtilityKeyDown(event);
+        closeVimiumLiteSettings();
+      } else if (event.ctrlKey && event.key === 'Enter') {
+        consumeUtilityKeyDown(event);
+        saveVimiumLitePrefixesFromInput();
+      }
+    });
+    const detachDrag = enableDraggablePanel(panel, header, { workspaceId: WORKSPACE_PANEL_IDS.vimiumSettings });
+    vimiumLitePanelState = { panel, detachDrag };
+    refreshVimiumLiteState();
+    document.body.appendChild(panel);
+    setWorkspacePanelOpen(WORKSPACE_PANEL_IDS.vimiumSettings, true);
+    vimiumLitePrefixesInput.focus();
   };
 
   const isRedditHost = () => {
@@ -3131,13 +3307,10 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
 
     rightClickListEl = document.createElement('div');
     rightClickListEl.className = 'utils-list';
-    const rightClickDesc = document.createElement('p');
-    rightClickDesc.textContent = 'Prevents the context menu and targets images/links based on the selected mode. Saved list persists via local storage.';
     rightClickSection.append(
       rightClickTitle,
       rightClickControls,
       rightClickPriorityRow,
-      rightClickDesc,
       rightClickListHeader,
       rightClickListEl
     );
@@ -3397,9 +3570,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     linkMonitorBtn.className = 'utils-btn';
     linkMonitorBtn.textContent = 'Open link monitor panel';
     linkMonitorBtn.addEventListener('click', () => openLinkMonitorPanel());
-    const linkMonitorDesc = document.createElement('p');
-    linkMonitorDesc.textContent = 'Scan page links every 50ms with one or more regex patterns and collect deduped matches.';
-    linkMonitorSection.append(linkMonitorTitle, linkMonitorBtn, linkMonitorDesc);
+    linkMonitorSection.append(linkMonitorTitle, linkMonitorBtn);
 
     const requestMonitorSection = document.createElement('div');
     requestMonitorSection.className = 'utils-section';
@@ -3410,9 +3581,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     requestMonitorBtn.className = 'utils-btn';
     requestMonitorBtn.textContent = 'Open request monitor panel';
     requestMonitorBtn.addEventListener('click', () => openRequestMonitorPanel());
-    const requestMonitorDesc = document.createElement('p');
-    requestMonitorDesc.textContent = 'Log page request URLs and filter captured URLs with one or more regex patterns.';
-    requestMonitorSection.append(requestMonitorTitle, requestMonitorBtn, requestMonitorDesc);
+    requestMonitorSection.append(requestMonitorTitle, requestMonitorBtn);
 
     const footer = document.createElement('div');
     footer.className = 'utils-footer';
@@ -3560,6 +3729,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     const commandItems = new Map([
       ['n', 'Notepad'],
       ['v', 'Vimium Lite'],
+      ['V', 'Vimium prefixes'],
       ['l', 'Copy links'],
       ['i', 'Image right-click'],
       ['p', 'Force paste'],
@@ -3607,7 +3777,11 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
       return;
     }
     if (commandKey === 'v') {
-      toggleVimiumLite({ persist: false, feedback: true });
+      toggleVimiumLite({ feedback: true });
+      return;
+    }
+    if (commandKey === 'V') {
+      openVimiumLiteSettings();
       return;
     }
     if (commandKey === 'l') {
@@ -6739,7 +6913,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
       return;
     }
     if (action === 'vimium-toggle') {
-      toggleVimiumLite({ persist: false, feedback: true });
+      toggleVimiumLite({ feedback: true });
       return;
     }
     if (action === 'clipboard-url') {
@@ -6830,6 +7004,8 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
   };
 
   const onKeyDownNav = (event) => {
+    // Check synchronously too: a SPA can change its URL just before a key press.
+    refreshVimiumLiteState();
     if (shouldIgnoreKeyEvent(event)) return;
     if (linkHintState) {
       handleLinkHintKeyDown(event);
@@ -7997,9 +8173,22 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     applySyncedRedditMutingEnabled(stored.enabled);
   };
 
+  const applySyncedVimiumLitePrefixes = (stored) => {
+    const prefixes = normalizeVimiumLitePrefixes(stored);
+    if (JSON.stringify(prefixes) === JSON.stringify(vimiumLiteDisabledPrefixes)) return;
+    vimiumLiteDisabledPrefixes = prefixes;
+    vimiumLitePageOverride = null;
+    refreshVimiumLiteState();
+  };
+
   const installCrossTabSync = () => {
+    // Older installed loaders may lack the value-change-listener grant.
+    window.addEventListener('focus', () => applySyncedVimiumLitePrefixes(loadVimiumLitePrefixes()));
     if (typeof GM_addValueChangeListener === 'function') {
       try {
+        GM_addValueChangeListener(VIMIUM_LITE_PREFIXES_KEY, (_key, _oldValue, newValue, remote) => {
+          if (remote) applySyncedVimiumLitePrefixes(newValue);
+        });
         GM_addValueChangeListener(PAGE_NOTES_KEY, (_key, _oldValue, newValue, remote) => {
           if (remote) applySyncedPageNotes(newValue);
         });
@@ -8029,6 +8218,9 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
       }
     }
     window.addEventListener('storage', (event) => {
+      if (typeof GM_getValue !== 'function' && (event.key === VIMIUM_LITE_PREFIXES_KEY || event.key === null)) {
+        applySyncedVimiumLitePrefixes(loadVimiumLitePrefixes());
+      }
       if (event.key === YOUTUBE_UI_SETTINGS_KEY) {
         youtubeUiSettings = loadYoutubeUiSettings();
         updateYoutubeUiInputs();
@@ -8053,6 +8245,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.xSettings) && isXHost()) openXSettingsPanel();
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.youtubeVideos) && isYouTubeHost()) openYoutubeVideoPanel();
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.noteBindings)) openNoteBindingSettingsPanel();
+    if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.vimiumSettings)) openVimiumLiteSettings();
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.linkMonitor)) openLinkMonitorPanel();
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.requestMonitor)) openRequestMonitorPanel();
     if (isWorkspacePanelOpen(WORKSPACE_PANEL_IDS.mediaManager)) runMediaManager();
@@ -8070,6 +8263,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     const nextUrl = window.location.href;
     if (nextUrl === lastWorkspaceUrl) return;
     lastWorkspaceUrl = nextUrl;
+    refreshVimiumLiteState();
     applyYoutubeUiSettings();
     pageNotePageUrl = nextUrl;
     pageNoteDismissedUrl = null;
@@ -8081,6 +8275,7 @@ ytd-watch-flexy #secondary-inner > #related.chr-utils-youtube-covered {
     closeXSettingsPanel({ remember: false });
     closeYoutubeVideoPanel({ remember: false });
     closeNoteBindingSettingsPanel({ remember: false });
+    closeVimiumLiteSettings({ remember: false });
     closeLinkMonitorPanel({ remember: false });
     closeRequestMonitorPanel({ remember: false });
     requestMonitorEntries.length = 0;
